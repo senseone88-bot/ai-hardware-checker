@@ -14,3 +14,6 @@ models.js
 
 # Temp debug files
 temp_*.txt
+
+# Debug/test HTML files
+webgl-test.html
