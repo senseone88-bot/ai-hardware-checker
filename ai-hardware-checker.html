@@ -2132,10 +2132,15 @@ function analyzeModel(overrideName) {
 // 啟動自動檢測
 // ========================================================================
 window.addEventListener("DOMContentLoaded", () => {
-  // 先載入硬體設定檔（PC 偵測結果），沒有才用瀏覽器偵測
-  autoLoadSystemConfig().then(loaded => {
-    if (!loaded) detectHardware();
-  });
+  // 手機/平板：直接用瀏覽器偵測目前裝置，不載入電腦設定檔
+  if (/Mobi|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+    detectHardware();
+  } else {
+    // 電腦：先載入硬體設定檔（PC 偵測結果），沒有才用瀏覽器偵測
+    autoLoadSystemConfig().then(loaded => {
+      if (!loaded) detectHardware();
+    });
+  }
   // 返回頂部按鈕顯示邏輯
   window.addEventListener("scroll", () => {
     document.getElementById("backToTop").classList.toggle("visible", window.scrollY > 400);
