@@ -2132,11 +2132,11 @@ function analyzeModel(overrideName) {
 // 啟動自動檢測
 // ========================================================================
 window.addEventListener("DOMContentLoaded", () => {
-  // 手機/平板：直接用瀏覽器偵測目前裝置，不載入電腦設定檔
-  if (/Mobi|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+  // 線上版 (HTTP/HTTPS)：瀏覽器偵測目前裝置，不載入寫死設定檔
+  if (window.location.protocol !== 'file:') {
     detectHardware();
   } else {
-    // 電腦：先載入硬體設定檔（PC 偵測結果），沒有才用瀏覽器偵測
+    // 本機版 (file://)：先載入硬體設定檔，沒有才用瀏覽器偵測
     autoLoadSystemConfig().then(loaded => {
       if (!loaded) detectHardware();
     });
