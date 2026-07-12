@@ -1147,7 +1147,9 @@ function detectVRAMByAllocation(gl) {
 
       if (err === 0) {
         lastSuccess = step;
-        step = Math.min(Math.floor(step * 1.5), maxTexSize);
+        const next = Math.floor(step * 1.5);
+        if (next <= step) break; // 防止 maxTexSize 過小時卡死
+        step = Math.min(next, maxTexSize);
       } else {
         break;
       }
