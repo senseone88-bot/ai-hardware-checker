@@ -1602,7 +1602,8 @@ function applySystemConfig(data) {
   pc.systemConfigLoaded = true;
   
   document.getElementById("sysDetectBanner").style.display = "block";
-  document.getElementById("sysDetectBanner").innerHTML = buildBannerMsg("✅ 已載入線上硬體偵測結果（來自 ", data);
+  const isHttp = window.location.protocol !== 'file:';
+  document.getElementById("sysDetectBanner").innerHTML = buildBannerMsg(isHttp ? "📋 PC 硬體配置參考（來自 " : "✅ 已載入線上硬體偵測結果（來自 ", data);
   
   // GPU
   if (data.gpu) {
@@ -1705,7 +1706,8 @@ async function autoLoadSystemConfig() {
       const data = await resp.json();
       if (data && data.vram_gb > 0 && !data.error) {
         applySystemConfig(data);
-        document.getElementById("sysDetectBanner").innerHTML = buildBannerMsg("✅ 已自動載入線上硬體偵測結果（來自 ", data);
+        const isHttp = window.location.protocol !== 'file:';
+        document.getElementById("sysDetectBanner").innerHTML = buildBannerMsg(isHttp ? "📋 PC 硬體配置參考（來自 " : "✅ 已自動載入線上硬體偵測結果（來自 ", data);
         return true;
       }
     }
@@ -1716,7 +1718,8 @@ async function autoLoadSystemConfig() {
     const data = await loadJSONViaScript();
     if (data && !data.error && data.vram_gb > 0) {
       applySystemConfig(data);
-      document.getElementById("sysDetectBanner").innerHTML = buildBannerMsg("✅ 已自動載入線上硬體偵測結果（來自 ", data);
+      const isHttp = window.location.protocol !== 'file:';
+      document.getElementById("sysDetectBanner").innerHTML = buildBannerMsg(isHttp ? "📋 PC 硬體配置參考（來自 " : "✅ 已自動載入線上硬體偵測結果（來自 ", data);
       return true;
     }
   } catch(e) { /* 沒有設定檔也沒關係 */ }
@@ -2129,15 +2132,10 @@ function analyzeModel(overrideName) {
 // 啟動自動檢測
 // ========================================================================
 window.addEventListener("DOMContentLoaded", () => {
-  // 線上版 (HTTP/HTTPS)：直接用瀏覽器偵測當前裝置
-  if (window.location.protocol !== 'file:') {
-    detectHardware();
-  } else {
-    // 本機版 (file://)：先載入硬體設定檔，沒有才用瀏覽器偵測
-    autoLoadSystemConfig().then(loaded => {
-      if (!loaded) detectHardware();
-    });
-  }
+  // 先載入硬體設定檔（PC 偵測結果），沒有才用瀏覽器偵測
+  autoLoadSystemConfig().then(loaded => {
+    if (!loaded) detectHardware();
+  });
   // 返回頂部按鈕顯示邏輯
   window.addEventListener("scroll", () => {
     document.getElementById("backToTop").classList.toggle("visible", window.scrollY > 400);
