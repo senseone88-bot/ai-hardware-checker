@@ -1,0 +1,2146 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 本地端模型硬體適配分析</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #242836;
+    --border: #2e3348;
+    --text: #e8eaf0;
+    --text2: #9ca3b8;
+    --accent: #7c5cfc;
+    --accent2: #5b8bfc;
+    --green: #34d399;
+    --yellow: #fbbf24;
+    --red: #f87171;
+    --gradient: linear-gradient(135deg, #7c5cfc, #5b8bfc);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 20px;
+  }
+  .container { max-width: 1000px; margin: 0 auto; }
+  header { text-align: center; padding: 40px 0 32px; }
+  header h1 {
+    font-size: 2rem; font-weight: 700;
+    background: var(--gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  header p { color: var(--text2); margin-top: 8px; font-size: 0.95rem; line-height: 1.6; }
+  @keyframes logoPulse {
+    0%, 100% { opacity: 0.85; }
+    50% { opacity: 1; }
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  header svg rect:first-of-type { animation: logoPulse 3s ease-in-out infinite; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 20px;
+    transition: border-color 0.2s;
+  }
+  .card-title {
+    font-size: 1.1rem; font-weight: 600; margin-bottom: 16px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card-title .icon { font-size: 1.3rem; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 10px 20px; border: none; border-radius: 10px;
+    font-size: 0.9rem; font-weight: 500; cursor: pointer;
+    transition: all 0.2s; background: var(--surface2); color: var(--text);
+  }
+  .btn:hover { filter: brightness(1.15); }
+  .btn-primary { background: var(--gradient); color: #fff; }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(124,92,252,0.35); }
+  .btn-sm { padding: 6px 14px; font-size: 0.82rem; }
+  .spec-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+  }
+  .spec-item {
+    background: var(--surface2);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .spec-label { font-size: 0.78rem; color: var(--text2); margin-bottom: 4px; }
+  .spec-value { font-size: 1.05rem; font-weight: 600; word-break: break-word; }
+  .spec-value .tag {
+    display: inline-block; font-size: 0.7rem; font-weight: 500;
+    padding: 2px 8px; border-radius: 6px; margin-left: 6px;
+  }
+  .tag-ok { background: rgba(52,211,153,0.15); color: var(--green); }
+  .tag-warn { background: rgba(251,191,36,0.15); color: var(--yellow); }
+  .tag-fail { background: rgba(248,113,113,0.15); color: var(--red); }
+  .search-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .search-row input {
+    flex: 1; min-width: 160px; padding: 10px 16px;
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--surface2); color: var(--text);
+    font-size: 0.9rem; outline: none; transition: border-color 0.2s;
+  }
+  .search-row input:focus { border-color: var(--accent); }
+  .search-row input::placeholder { color: #5a5f7a; }
+  .model-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 6px 14px; border-radius: 20px; font-size: 0.82rem;
+    background: var(--surface2); border: 1px solid var(--border);
+    cursor: pointer; transition: all 0.2s; color: var(--text2);
+  }
+  .chip:hover { border-color: var(--accent); color: var(--text); }
+  .chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .chip.chip-hidden { display: none; }
+  .result-section { display: none; }
+  .result-section.visible { display: block; }
+  .comparison-table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  .comparison-table th, .comparison-table td {
+    padding: 10px 14px; text-align: left;
+    border-bottom: 1px solid var(--border); font-size: 0.88rem;
+  }
+  .comparison-table th { color: var(--text2); font-weight: 500; font-size: 0.82rem; }
+  .verdict {
+    padding: 16px 20px; border-radius: 12px; margin: 16px 0;
+    font-size: 0.95rem; line-height: 1.6;
+  }
+  .verdict.pass { background: rgba(52,211,153,0.1); border: 1px solid rgba(52,211,153,0.25); }
+  .verdict.warn { background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.25); }
+  .verdict.fail { background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.25); }
+  .suggestions { margin-top: 12px; }
+  .suggestions li { margin: 6px 0 6px 20px; font-size: 0.88rem; color: var(--text2); line-height: 1.5; }
+  .suggestions li strong { color: var(--text); }
+  .spinner {
+    display: inline-block; width: 18px; height: 18px;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 0.7s linear infinite;
+    vertical-align: middle;
+  }
+  .manual-gpu { display: none; margin-top: 12px; padding: 14px; background: var(--surface2); border-radius: 10px; }
+  .manual-gpu.visible { display: block; }
+  .manual-gpu select, .manual-gpu input {
+    padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--surface); color: var(--text); font-size: 0.85rem; margin: 4px 4px 4px 0;
+  }
+  .badge {
+    display: inline-block; padding: 2px 10px; border-radius: 6px;
+    font-size: 0.72rem; font-weight: 600; margin-right: 4px;
+  }
+  .badge-blue { background: rgba(91,139,252,0.15); color: #5b8bfc; }
+  .badge-purple { background: rgba(124,92,252,0.15); color: #7c5cfc; }
+  .badge-green { background: rgba(52,211,153,0.15); color: #34d399; }
+  .badge-orange { background: rgba(251,191,36,0.15); color: #fbbf24; }
+  .badge-red { background: rgba(248,113,113,0.15); color: #f87171; }
+  .model-detail { font-size: 0.88rem; line-height: 1.7; color: var(--text2); margin: 8px 0; }
+  .model-detail strong { color: var(--text); }
+  @media (max-width: 640px) {
+    body { padding: 12px; }
+    header h1 { font-size: 1.5rem; }
+    .spec-grid { grid-template-columns: 1fr 1fr; }
+    .card { padding: 16px; }
+    .search-row { flex-direction: column; }
+    .search-row input { min-width: auto; }
+  }
+  /* 返回頂部按鈕 */
+  .back-to-top {
+    position: fixed; bottom: 30px; right: 30px; z-index: 999;
+    width: 44px; height: 44px; border-radius: 50%;
+    background: var(--accent); color: #fff; border: none;
+    font-size: 1.2rem; cursor: pointer;
+    display: none; align-items: center; justify-content: center;
+    box-shadow: 0 4px 16px rgba(124,92,252,0.35);
+    transition: all 0.3s;
+  }
+  .back-to-top:hover { transform: translateY(-2px); box-shadow: 0 6px 24px rgba(124,92,252,0.5); }
+  .back-to-top.visible { display: flex; }
+  /* 偵測彈窗 */
+  .detect-overlay {
+    display: none; position: fixed; inset: 0; z-index: 1000;
+    background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+    justify-content: center; align-items: center;
+  }
+  .detect-overlay.visible { display: flex; }
+  .detect-modal {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px; padding: 32px; max-width: 480px; width: 90%;
+    text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .detect-modal h2 { margin-bottom: 8px; font-size: 1.3rem; }
+  .detect-modal p { color: var(--text2); font-size: 0.9rem; line-height: 1.6; margin-bottom: 16px; }
+  .detect-steps { text-align: left; margin: 16px 0; }
+  .detect-step { display: flex; align-items: center; gap: 10px; padding: 8px 0; font-size: 0.88rem; color: var(--text2); }
+  .detect-step .step-icon { width: 24px; text-align: center; font-size: 1rem; }
+  .detect-step.done { color: var(--green); }
+  .detect-step.active { color: var(--text); }
+  .detect-step.fail { color: var(--red); }
+  .detect-spinner {
+    display: inline-block; width: 40px; height: 40px;
+    border: 3px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+    margin: 8px auto;
+  }
+  .detect-retry-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 10px 24px; border: none; border-radius: 10px;
+    font-size: 0.9rem; font-weight: 500; cursor: pointer;
+    background: var(--gradient); color: #fff; transition: all 0.2s;
+    margin: 4px;
+  }
+  .detect-retry-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(124,92,252,0.35); }
+  .detect-close-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 10px 24px; border: 1px solid var(--border); border-radius: 10px;
+    font-size: 0.9rem; cursor: pointer;
+    background: var(--surface2); color: var(--text2); transition: all 0.2s;
+    margin: 4px;
+  }
+  .detect-close-btn:hover { background: var(--border); color: var(--text); }
+  .detect-browser-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 10px 24px; border: 1px solid var(--border); border-radius: 10px;
+    font-size: 0.85rem; cursor: pointer;
+    background: var(--surface2); color: var(--accent2); transition: all 0.2s;
+    margin: 4px;
+  }
+  .detect-browser-btn:hover { border-color: var(--accent); }
+  .json-modified-badge {
+    display: inline-block; font-size: 0.72rem; padding: 2px 8px;
+    border-radius: 6px; background: rgba(52,211,153,0.12);
+    color: var(--green); margin-left: 6px;
+  }
+  .sensor-group {
+    background: var(--surface2); border-radius: 12px; margin-bottom: 8px; overflow: hidden;
+  }
+  .sensor-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 16px; cursor: pointer; user-select: none;
+    font-size: 0.85rem; font-weight: 600; color: var(--text);
+    transition: background 0.2s;
+  }
+  .sensor-header:hover { background: rgba(255,255,255,0.04); }
+  .sensor-header .arrow { transition: transform 0.25s ease; font-size: 0.7rem; }
+  .sensor-header .arrow.open { transform: rotate(90deg); }
+  .sensor-header .sensor-count {
+    font-size: 0.72rem; color: var(--text2); font-weight: 400; margin-left: auto;
+  }
+  .sensor-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px;
+    padding: 0 16px 14px; transition: all 0.25s ease;
+  }
+  .sensor-grid.collapsed { display: none; padding: 0 16px; }
+  .sensor-item {
+    background: var(--bg); border-radius: 8px; padding: 8px 12px;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .sensor-item .s-label { font-size: 0.72rem; color: var(--text2); }
+  .sensor-item .s-value { font-size: 1rem; font-weight: 600; }
+  .sensor-item .s-value.temp-hot { color: #ef4444; }
+  .sensor-item .s-value.temp-warm { color: #f59e0b; }
+  .sensor-item .s-value.temp-ok { color: #10b981; }
+  .sensor-item .s-value.load-high { color: #ef4444; }
+  .sensor-item .s-value.load-med { color: #f59e0b; }
+  .sensor-item .s-value.load-low { color: #10b981; }
+  .sensor-item .s-unit { font-size: 0.72rem; color: var(--text2); font-weight: 400; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header style="position:relative;">
+  <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+    <div>
+      <h1 style="display:flex; align-items:center; gap:10px; justify-content:center;">
+        <svg width="42" height="42" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;">
+          <defs>
+            <linearGradient id="lg" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#7c5cfc"/>
+              <stop offset="100%" stop-color="#5b8bfc"/>
+            </linearGradient>
+          </defs>
+          <!-- chip base -->
+          <rect x="30" y="30" width="40" height="40" rx="6" fill="url(#lg)" opacity="0.9"/>
+          <!-- chip inner -->
+          <rect x="38" y="38" width="24" height="24" rx="3" fill="#0f1117" opacity="0.7"/>
+          <rect x="42" y="42" width="16" height="16" rx="2" fill="url(#lg)"/>
+          <!-- chip pins -->
+          <line x1="30" y1="42" x2="22" y2="42" stroke="url(#lg)" stroke-width="3" stroke-linecap="round"/>
+          <line x1="30" y1="50" x2="20" y2="50" stroke="url(#lg)" stroke-width="3" stroke-linecap="round"/>
+          <line x1="30" y1="58" x2="22" y2="58" stroke="url(#lg)" stroke-width="3" stroke-linecap="round"/>
+          <line x1="70" y1="42" x2="78" y2="42" stroke="url(#lg)" stroke-width="3" stroke-linecap="round"/>
+          <line x1="70" y1="50" x2="80" y2="50" stroke="url(#lg)" stroke-width="3" stroke-linecap="round"/>
+          <line x1="70" y1="58" x2="78" y2="58" stroke="url(#lg)" stroke-width="3" stroke-linecap="round"/>
+          <!-- neural nodes -->
+          <circle cx="14" cy="16" r="5" fill="none" stroke="url(#lg)" stroke-width="2"/>
+          <circle cx="40" cy="12" r="5" fill="none" stroke="url(#lg)" stroke-width="2"/>
+          <circle cx="66" cy="14" r="5" fill="none" stroke="url(#lg)" stroke-width="2"/>
+          <circle cx="12" cy="76" r="5" fill="none" stroke="url(#lg)" stroke-width="2"/>
+          <circle cx="54" cy="84" r="5" fill="none" stroke="url(#lg)" stroke-width="2"/>
+          <circle cx="80" cy="78" r="5" fill="none" stroke="url(#lg)" stroke-width="2"/>
+          <!-- neural connections -->
+          <line x1="18" y1="20" x2="36" y2="16" stroke="url(#lg)" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.6"/>
+          <line x1="44" y1="16" x2="62" y2="18" stroke="url(#lg)" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.6"/>
+          <line x1="18" y1="72" x2="34" y2="64" stroke="url(#lg)" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.6"/>
+          <line x1="48" y1="64" x2="62" y2="74" stroke="url(#lg)" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.6"/>
+          <line x1="14" y1="20" x2="12" y2="72" stroke="url(#lg)" stroke-width="1" stroke-dasharray="2,3" opacity="0.4"/>
+          <line x1="40" y1="16" x2="38" y2="30" stroke="url(#lg)" stroke-width="1" stroke-dasharray="2,3" opacity="0.4"/>
+          <line x1="66" y1="18" x2="70" y2="30" stroke="url(#lg)" stroke-width="1" stroke-dasharray="2,3" opacity="0.4"/>
+          <line x1="22" y1="76" x2="34" y2="76" stroke="url(#lg)" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.6"/>
+          <line x1="58" y1="80" x2="76" y2="78" stroke="url(#lg)" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.6"/>
+          <!-- center dot -->
+          <circle cx="50" cy="50" r="3" fill="#7c5cfc" opacity="0.8"/>
+        </svg>
+        AI 本地端模型硬體適配分析</h1>
+      <p>檢測你的電腦配置，分析哪些 AI 模型能跑得動</p>
+    </div>
+    <a href="https://shopee.tw/mazz68" target="_blank" rel="noopener" style="flex-shrink:0; color:var(--accent2); text-decoration:none; display:inline-flex; align-items:center; gap:4px; padding:6px 14px; border-radius:20px; background:var(--surface2); border:1px solid var(--border); transition:all 0.2s;">
+      <strong>✨ AI夢幻工廠</strong> <span style="font-size:0.72rem; opacity:0.6;">↗</span>
+    </a>
+  </div>
+</header>
+
+<!-- ========== 硬體檢測 ========== -->
+<div class="card">
+  <div class="card-title"><span class="icon">💻</span> 當前硬體配置</div>
+
+  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px;">
+    <button class="btn btn-primary" onclick="detectHardware()">🔍 檢測本機硬體</button>
+    <button class="btn" onclick="quickDetectGPU()">🎮 重新偵測 GPU</button>
+  </div>
+
+  <div id="sysDetectBanner" style="display:none; padding:10px 14px; background:rgba(91,139,252,0.1); border:1px solid rgba(91,139,252,0.25); border-radius:10px; margin-bottom:12px; font-size:0.85rem; line-height:1.6;">
+    🖥️ 點兩下 <code style="background:var(--surface); padding:2px 8px; border-radius:4px;">run-detection.bat</code> 即可用 Windows 原生 API 精準偵測真實硬體規格（不受瀏覽器限制）
+  </div>
+
+  <div class="spec-grid" id="specGrid">
+    <div class="spec-item"><div class="spec-label">🖥️ 作業系統</div><div class="spec-value" id="spec_os">—</div></div>
+    <div class="spec-item"><div class="spec-label">🧠 CPU</div><div class="spec-value" id="spec_cpu">—</div></div>
+    <div class="spec-item"><div class="spec-label">💾 記憶體 (RAM)</div><div class="spec-value" id="spec_ram">—</div></div>
+    <div class="spec-item"><div class="spec-label">🎮 GPU</div><div class="spec-value" id="spec_gpu">—</div></div>
+    <div class="spec-item"><div class="spec-label">📊 顯示記憶體 (VRAM)</div><div class="spec-value" id="spec_vram">—</div></div>
+    <div class="spec-item"><div class="spec-label">💿 磁碟</div><div class="spec-value" id="spec_disk">—</div></div>
+  </div>
+
+  <!-- 感測器面板 -->
+  <div id="sensorPanel" style="display:none; margin-top:12px;">
+    <div style="font-size:0.9rem; font-weight:600; color:var(--text); margin-bottom:8px;">🌡️ 硬體感測器（LibreHardwareMonitor）</div>
+    <div id="sensorContent"></div>
+  </div>
+
+  <!-- 手動調整 GPU -->
+  <div class="manual-gpu" id="manualGpu">
+    <div style="font-size:0.85rem; color:var(--text2); margin-bottom:8px;">
+      ⚙️ 手動指定 GPU 與 VRAM（自動檢測不準確時修改）
+    </div>
+    <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+      <select id="gpuSelect" onchange="onGpuSelect()" style="flex:2; min-width:200px;">
+        <option value="">— 選擇 GPU 型號 —</option>
+        <optgroup label="NVIDIA">
+          <option value="RTX 5090|32">RTX 5090 (32GB)</option>
+          <option value="RTX 5080|24">RTX 5080 (24GB)</option>
+          <option value="RTX 4090|24">RTX 4090 (24GB)</option>
+          <option value="RTX 4080 Super|16">RTX 4080 Super (16GB)</option>
+          <option value="RTX 4080|16">RTX 4080 (16GB)</option>
+          <option value="RTX 4070 Ti Super|16">RTX 4070 Ti Super (16GB)</option>
+          <option value="RTX 4070 Ti|12">RTX 4070 Ti (12GB)</option>
+          <option value="RTX 4070 Super|12">RTX 4070 Super (12GB)</option>
+          <option value="RTX 4070|12">RTX 4070 (12GB)</option>
+          <option value="RTX 4060 Ti 16GB|16">RTX 4060 Ti (16GB)</option>
+          <option value="RTX 4060 Ti 8GB|8">RTX 4060 Ti (8GB)</option>
+          <option value="RTX 4060|8">RTX 4060 (8GB)</option>
+          <option value="RTX 3090|24">RTX 3090 (24GB)</option>
+          <option value="RTX 3080 Ti|12">RTX 3080 Ti (12GB)</option>
+          <option value="RTX 3080 10GB|10">RTX 3080 (10GB)</option>
+          <option value="RTX 3070|8">RTX 3070 (8GB)</option>
+          <option value="RTX 3060 Ti|8">RTX 3060 Ti (8GB)</option>
+          <option value="RTX 3060 12GB|12">RTX 3060 (12GB)</option>
+          <option value="RTX 3060 8GB|8">RTX 3060 (8GB)</option>
+          <option value="RTX 3050|6">RTX 3050 (6GB)</option>
+          <option value="GTX 1660 Super|6">GTX 1660 Super (6GB)</option>
+          <option value="GTX 1060 6GB|6">GTX 1060 (6GB)</option>
+          <option value="GTX 1060 3GB|3">GTX 1060 (3GB)</option>
+          <option value="GTX 1050 Ti|4">GTX 1050 Ti (4GB)</option>
+          <option value="Titan RTX|24">Titan RTX (24GB)</option>
+          <option value="A100 80GB|80">A100 (80GB)</option>
+          <option value="A100 40GB|40">A100 (40GB)</option>
+          <option value="H100|80">H100 (80GB)</option>
+        </optgroup>
+        <optgroup label="🎮 NVIDIA Laptop GPU">
+          <option value="RTX 5090 Laptop|24">RTX 5090 Laptop (24GB)</option>
+          <option value="RTX 5080 Laptop|16">RTX 5080 Laptop (16GB)</option>
+          <option value="RTX 5070 Ti Laptop|12">RTX 5070 Ti Laptop (12GB)</option>
+          <option value="RTX 5070 Laptop|8">RTX 5070 Laptop (8GB)</option>
+          <option value="RTX 5060 Laptop|8">RTX 5060 Laptop (8GB)</option>
+          <option value="RTX 4090 Laptop|16">RTX 4090 Laptop (16GB)</option>
+          <option value="RTX 4080 Laptop|12">RTX 4080 Laptop (12GB)</option>
+          <option value="RTX 4070 Laptop|8">RTX 4070 Laptop (8GB)</option>
+          <option value="RTX 4060 Laptop|8">RTX 4060 Laptop (8GB)</option>
+          <option value="RTX 4050 Laptop|6">RTX 4050 Laptop (6GB)</option>
+          <option value="RTX 3080 Ti Laptop|16">RTX 3080 Ti Laptop (16GB)</option>
+          <option value="RTX 3080 Laptop|8">RTX 3080 Laptop (8GB)</option>
+          <option value="RTX 3070 Ti Laptop|8">RTX 3070 Ti Laptop (8GB)</option>
+          <option value="RTX 3070 Laptop|8">RTX 3070 Laptop (8GB)</option>
+          <option value="RTX 3060 Laptop|6">RTX 3060 Laptop (6GB)</option>
+          <option value="RTX 3050 Ti Laptop|4">RTX 3050 Ti Laptop (4GB)</option>
+          <option value="RTX 3050 Laptop|4">RTX 3050 Laptop (4GB)</option>
+          <option value="RTX 2050 Laptop|4">RTX 2050 Laptop (4GB)</option>
+        </optgroup>
+        <optgroup label="🔴 AMD Radeon (Desktop + Laptop)">
+          <option value="RX 7900 XTX|24">RX 7900 XTX (24GB)</option>
+          <option value="RX 7900 XT|20">RX 7900 XT (20GB)</option>
+          <option value="RX 7800 XT|16">RX 7800 XT (16GB)</option>
+          <option value="RX 7700 XT|12">RX 7700 XT (12GB)</option>
+          <option value="RX 7600|8">RX 7600 (8GB)</option>
+          <option value="RX 7900M|16">RX 7900M (16GB) 💻</option>
+          <option value="RX 7800M|12">RX 7800M (12GB) 💻</option>
+          <option value="RX 7600M XT|8">RX 7600M XT (8GB) 💻</option>
+          <option value="RX 7600M|8">RX 7600M (8GB) 💻</option>
+          <option value="RX 7700S|8">RX 7700S (8GB) 💻</option>
+          <option value="RX 7600S|6">RX 7600S (6GB) 💻</option>
+          <option value="RX 6900 XT|16">RX 6900 XT (16GB)</option>
+          <option value="RX 6800 XT|16">RX 6800 XT (16GB)</option>
+          <option value="RX 6700 XT|12">RX 6700 XT (12GB)</option>
+          <option value="RX 6600|8">RX 6600 (8GB)</option>
+          <option value="RX 6800M|12">RX 6800M (12GB) 💻</option>
+          <option value="RX 6700M|10">RX 6700M (10GB) 💻</option>
+          <option value="RX 6600M|8">RX 6600M (8GB) 💻</option>
+        </optgroup>
+        <optgroup label="Apple Silicon">
+          <option value="M1|8">M1 (8GB)</option>
+          <option value="M1 Pro|16">M1 Pro (16GB)</option>
+          <option value="M1 Max|32">M1 Max (32GB)</option>
+          <option value="M1 Ultra|64">M1 Ultra (64GB)</option>
+          <option value="M2|8">M2 (8GB)</option>
+          <option value="M2 Pro|16">M2 Pro (16GB)</option>
+          <option value="M2 Max|32">M2 Max (32GB)</option>
+          <option value="M2 Ultra|64">M2 Ultra (64GB)</option>
+          <option value="M3|8">M3 (8GB)</option>
+          <option value="M3 Pro|18">M3 Pro (18GB)</option>
+          <option value="M3 Max|48">M3 Max (48GB)</option>
+          <option value="M4|16">M4 (16GB)</option>
+          <option value="M4 Pro|24">M4 Pro (24GB)</option>
+          <option value="M4 Max|48">M4 Max (48GB)</option>
+        </optgroup>
+        <optgroup label="Intel">
+          <option value="Arc A770|16">Arc A770 (16GB)</option>
+          <option value="Arc A750|8">Arc A750 (8GB)</option>
+          <option value="Arc A580|8">Arc A580 (8GB)</option>
+        </optgroup>
+      </select>
+      <input type="number" id="vramManual" placeholder="VRAM (GB)" min="1" max="200" style="width:110px;">
+      <button class="btn btn-sm btn-primary" onclick="applyManualGpu()">套用</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 模型查詢 ========== -->
+<div class="card">
+  <div class="card-title"><span class="icon">🤖</span> 查詢模型需求</div>
+
+  <div class="search-row">
+    <input type="text" id="modelSearch" list="modelList" placeholder="輸入模型名稱，如 LTX2.3、WAN2.2、Qwen2.5、FLUX…" oninput="filterModels()" onkeydown="if(event.key==='Enter') analyzeModel()">
+    <datalist id="modelList"></datalist>
+    <button class="btn btn-primary" onclick="analyzeModel()">📊 分析相容性</button>
+  </div>
+
+  <!-- 分類篩選 -->
+  <div id="categoryFilters" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;"></div>
+
+  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+    <span style="font-size:0.8rem; color:var(--text2);">🔥 快速選擇：</span>
+    <button id="chipToggleBtn" class="btn btn-sm" onclick="toggleChips()" style="font-size:0.75rem;">📌 收合全部</button>
+  </div>
+  <div class="model-chips" id="modelChips"></div>
+  <div style="margin-top:12px; text-align:center;">
+    <a href="https://shopee.tw/mazz68" target="_blank" rel="noopener" class="btn" style="display:inline-flex; align-items:center; gap:6px; background:linear-gradient(135deg,#7c5cfc,#5b3dc7); color:#fff; border:none; padding:10px 24px; border-radius:12px; font-size:0.95rem; font-weight:600; text-decoration:none; transition:transform 0.2s, box-shadow 0.2s;">
+      🛒 AI夢幻工廠 — 挑選AI模型
+    </a>
+  </div>
+</div>
+
+<!-- ========== 分析結果 ========== -->
+<div class="result-section" id="resultSection">
+  <div class="card" style="border-color:var(--accent);">
+    <div class="card-title"><span class="icon">📊</span> 相容性分析報告</div>
+    <div id="resultContent">
+      <div style="text-align:center; padding:20px; color:var(--text2);">選擇模型後點擊分析查看結果</div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 偵測彈窗 ========== -->
+<div class="detect-overlay" id="detectOverlay">
+  <div class="detect-modal">
+    <div id="detectModalContent">
+      <div class="detect-spinner"></div>
+      <h2>🔍 線上硬體偵測中...</h2>
+      <p>正在調用 Windows PowerShell 偵測真實硬體規格</p>
+      <div class="detect-steps" id="detectSteps">
+        <div class="detect-step" id="step1"><span class="step-icon">⏳</span> 啟動 PowerShell 偵測腳本</div>
+        <div class="detect-step" id="step2"><span class="step-icon">⏳</span> 讀取 GPU / VRAM 數據</div>
+        <div class="detect-step" id="step3"><span class="step-icon">⏳</span> 讀取 CPU / RAM / 磁碟資訊</div>
+        <div class="detect-step" id="step4"><span class="step-icon">⏳</span> 載入偵測結果</div>
+      </div>
+      <p style="font-size:0.8rem;color:var(--text2);">
+        瀏覽器無法直接執行系統腳本，請依提示操作
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 腳注 ========== -->
+<div style="text-align:center; padding:20px 0 10px; font-size:0.78rem; color:var(--text2);">
+  檢測結果僅供參考。實際模型運行需求因量化精度、解析度、框架最佳化等因素而異。
+</div>
+
+</div>
+
+<!-- 返回頂部按鈕 -->
+<button class="back-to-top" id="backToTop" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="回到頂部">↑</button>
+
+<script>
+// ========================================================================
+// 模型數據庫
+// ========================================================================
+const MODELS = {
+  // === 視頻生成 ===
+  "LTX 2.3":           { type: "視頻生成", params: "~7B",  vram_min: 16, vram_rec: 24, ram_min: 16, ram_rec: 32, disk: 20, note: "Lightricks 出品，基於 DiT 架構，支持文生視頻和圖生視頻。推薦 24GB+ VRAM。", cat: "video" },
+  "WAN 2.2":           { type: "視頻生成", params: "~14B", vram_min: 16, vram_rec: 24, ram_min: 24, ram_rec: 32, disk: 30, note: "阿里達摩院出品，高質量視頻生成。圖生視頻/文生視頻。推薦 24GB+。", cat: "video" },
+  "CogVideoX":         { type: "視頻生成", params: "~9B",  vram_min: 12, vram_rec: 18, ram_min: 16, ram_rec: 32, disk: 20, note: "智譜 CogVideoX-5B/9B 系列。12GB 可跑低解析度基礎版。", cat: "video" },
+  "Sora":              { type: "視頻生成", params: "—",    vram_min: 24, vram_rec: 48, ram_min: 32, ram_rec: 64, disk: 50, note: "OpenAI Sora。本地部署需極高配置，推薦雲端使用。", cat: "video" },
+  "AnimateDiff":       { type: "視頻生成", params: "~1.5B", vram_min: 8,  vram_rec: 12, ram_min:  8, ram_rec: 16, disk: 10, note: "Stable Diffusion 動畫插件/獨立版。8GB 可跑基礎版。", cat: "video" },
+  "Stable Video Diffusion": { type: "視頻生成", params: "~2.7B", vram_min: 10, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 15, note: "Stability AI 官方視頻生成模型。", cat: "video" },
+  "Mochi 1":           { type: "視頻生成", params: "~10B", vram_min: 16, vram_rec: 24, ram_min: 24, ram_rec: 32, disk: 25, note: "Genmo 開源視頻生成，高表現力。", cat: "video" },
+  "Pyramid Flow":      { type: "視頻生成", params: "~7B",  vram_min: 12, vram_rec: 20, ram_min: 16, ram_rec: 32, disk: 18, note: "北大/快手開源視頻生成模型。", cat: "video" },
+  "Open-Sora Plan":    { type: "視頻生成", params: "~3B",  vram_min: 10, vram_rec: 16, ram_min: 16, ram_rec: 24, disk: 20, note: "開源 Sora 復現方案。", cat: "video" },
+
+  // === 圖像生成 ===
+  "Stable Diffusion XL":  { type: "圖像生成", params: "~3.5B", vram_min: 8,  vram_rec: 12, ram_min:  8, ram_rec: 16, disk: 10, note: "SDXL 經典文生圖。8GB 可跑基礎，推薦 12GB+。", cat: "image" },
+  "SD 3.5":               { type: "圖像生成", params: "~8B",  vram_min: 12, vram_rec: 16, ram_min: 16, ram_rec: 24, disk: 20, note: "Stability AI 最新文生圖，MMDiT 架構。", cat: "image" },
+  "FLUX.1":               { type: "圖像生成", params: "~12B", vram_min: 12, vram_rec: 24, ram_min: 16, ram_rec: 32, disk: 24, note: "Black Forest Labs。12GB 可跑 FP8 量化，24GB 跑完整版。當前最強開源文生圖之一。", cat: "image" },
+  "FLUX.1 Pro":           { type: "圖像生成", params: "~12B", vram_min: 24, vram_rec: 32, ram_min: 24, ram_rec: 48, disk: 30, note: "FLUX Pro 商業版，需要更多 VRAM。", cat: "image" },
+  "Midjourney":           { type: "圖像生成", params: "—",    vram_min:  0, vram_rec:  0, ram_min:  0, ram_rec:  0, disk:  0, cloud: true, note: "🌐 雲端服務，無需本地 GPU。", cat: "image" },
+  "DALL·E 3":             { type: "圖像生成", params: "—",    vram_min:  0, vram_rec:  0, ram_min:  0, ram_rec:  0, disk:  0, cloud: true, note: "🌐 OpenAI 雲端服務。", cat: "image" },
+  "Playground v3":        { type: "圖像生成", params: "~8B",  vram_min: 12, vram_rec: 16, ram_min: 16, ram_rec: 24, disk: 18, note: "Playground AI 文生圖。", cat: "image" },
+  "Kolors":               { type: "圖像生成", params: "~2.6B", vram_min: 8,  vram_rec: 12, ram_min:  8, ram_rec: 16, disk: 10, note: "快手可圖，中文提示詞友好。8GB 可跑。", cat: "image" },
+  "Stable Diffusion 3":   { type: "圖像生成", params: "~8B",  vram_min: 12, vram_rec: 16, ram_min: 16, ram_rec: 24, disk: 20, note: "MMDiT 架構文生圖。", cat: "image" },
+  "PixArt-α":             { type: "圖像生成", params: "~0.6B", vram_min: 4,  vram_rec: 8,  ram_min:  8, ram_rec: 16, disk:  6, note: "輕量高效文生圖，低配友好。", cat: "image" },
+  "Latent Consistency Model": { type: "圖像生成", params: "~1.5B", vram_min: 4, vram_rec: 8, ram_min: 8, ram_rec: 12, disk: 6, note: "快速推理（1-4步生成），低配可跑。", cat: "image" },
+
+  // === 圖像編輯 ===
+  "InstructPix2Pix":     { type: "圖像編輯", params: "~1.5B", vram_min: 6,  vram_rec: 10, ram_min:  8, ram_rec: 16, disk:  8, note: "指令式圖像編輯。", cat: "edit" },
+  "SDXL Turbo Edit":     { type: "圖像編輯", params: "~3.5B", vram_min: 8,  vram_rec: 12, ram_min:  8, ram_rec: 16, disk: 10, note: "基於 SDXL 的快速編輯。", cat: "edit" },
+  "ControlNet (SDXL)":   { type: "圖像編輯", params: "~3.5B", vram_min: 8,  vram_rec: 12, ram_min:  8, ram_rec: 16, disk: 12, note: "條件控制，支持邊緣/姿態/深度等。", cat: "edit" },
+  "IP-Adapter":          { type: "圖像編輯", params: "~0.3B", vram_min: 6,  vram_rec: 10, ram_min:  8, ram_rec: 16, disk:  6, note: "圖像提示適配器，配合其他模型使用。", cat: "edit" },
+  "IC-Light":            { type: "圖像編輯", params: "~1B",  vram_min: 6,  vram_rec: 10, ram_min:  8, ram_rec: 16, disk:  6, note: "圖像重打光/背景融合。", cat: "edit" },
+  "In-Context LoRA":     { type: "圖像編輯", params: "~1B",  vram_min: 8,  vram_rec: 12, ram_min:  8, ram_rec: 16, disk:  8, note: "上下文 LoRA 圖像編輯。", cat: "edit" },
+
+  // === LLM (通義千問) ===
+  "Qwen 2.5 7B":         { type: "LLM", params: "7B",   vram_min:  6, vram_rec: 10, ram_min:  8, ram_rec: 16, disk: 15, note: "Int4 量化 6GB，FP16 需 14GB。推薦 10GB+ VRAM。", cat: "llm" },
+  "Qwen 2.5 14B":        { type: "LLM", params: "14B",  vram_min: 10, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 30, note: "Int4 量化 10GB，FP16 需 28GB。推薦 16GB+。", cat: "llm" },
+  "Qwen 2.5 32B":        { type: "LLM", params: "32B",  vram_min: 20, vram_rec: 28, ram_min: 24, ram_rec: 48, disk: 60, note: "Int4 量化 20GB，推薦 24GB+。", cat: "llm" },
+  "Qwen 2.5 72B":        { type: "LLM", params: "72B",  vram_min: 40, vram_rec: 48, ram_min: 48, ram_rec: 64, disk: 140, note: "Int4 量化 40GB，推薦雙卡或多卡部署。", cat: "llm" },
+  "Qwen 2.5 VL 7B":      { type: "LLM", params: "7B",   vram_min:  8, vram_rec: 12, ram_min:  8, ram_rec: 16, disk: 20, note: "視覺語言多模態版。比純文本版略多 VRAM。", cat: "llm" },
+  "Qwen 2.5 VL 72B":     { type: "LLM", params: "72B",  vram_min: 44, vram_rec: 52, ram_min: 48, ram_rec: 64, disk: 150, note: "超大視覺語言模型，推薦多卡部署。", cat: "llm" },
+  "Qwen 2.5 Coder 7B":   { type: "LLM", params: "7B",   vram_min:  6, vram_rec: 10, ram_min:  8, ram_rec: 16, disk: 16, note: "代碼專用。Int4 量化 6GB。", cat: "llm" },
+  "Qwen 2.5 Coder 32B":  { type: "LLM", params: "32B",  vram_min: 20, vram_rec: 28, ram_min: 24, ram_rec: 48, disk: 65, note: "32B 代碼模型，推薦 24GB+。", cat: "llm" },
+  "Qwen 2":              { type: "LLM", params: "7B",   vram_min:  6, vram_rec: 12, ram_min:  8, ram_rec: 24, disk: 30, note: "Qwen2 系列（以 7B 為參考）。", cat: "llm" },
+  "Qwen 1.5":            { type: "LLM", params: "7B",   vram_min:  6, vram_rec: 10, ram_min:  8, ram_rec: 16, disk: 15, note: "Qwen1.5 系列。Int4 量化可跑。", cat: "llm" },
+
+  // === LLM (其他主流) ===
+  "Llama 3 8B":          { type: "LLM", params: "8B",   vram_min:  6, vram_rec: 10, ram_min:  8, ram_rec: 16, disk: 16, note: "Meta Llama 3。Int4 量化 6GB，FP16 需 16GB。", cat: "llm" },
+  "Llama 3.1 70B":       { type: "LLM", params: "70B",  vram_min: 40, vram_rec: 48, ram_min: 48, ram_rec: 64, disk: 140, note: "Int4 量化 40GB，推薦 48GB+ 或雙卡。", cat: "llm" },
+  "Llama 3.1 405B":      { type: "LLM", params: "405B", vram_min: 80, vram_rec: 160, ram_min: 128, ram_rec: 256, disk: 800, note: "最大開源 LLM。需多卡 A100/H100 集群。", cat: "llm" },
+  "DeepSeek V3":         { type: "LLM", params: "671B", vram_min: 24, vram_rec: 48, ram_min: 32, ram_rec: 64, disk: 400, note: "MoE（激活 37B）。Int4 量化可用 24GB 運行。", cat: "llm" },
+  "DeepSeek R1":         { type: "LLM", params: "671B", vram_min: 24, vram_rec: 48, ram_min: 32, ram_rec: 64, disk: 400, note: "DeepSeek 推理模型（MoE）。量化後 24GB 可跑。", cat: "llm" },
+  "Mistral 7B":          { type: "LLM", params: "7B",   vram_min:  6, vram_rec: 10, ram_min:  8, ram_rec: 16, disk: 15, note: "Mistral AI 開源 LLM。", cat: "llm" },
+  "Mistral Large":       { type: "LLM", params: "123B", vram_min: 64, vram_rec: 96, ram_min: 64, ram_rec: 128, disk: 250, note: "Mistral 最大模型，需多卡部署。", cat: "llm" },
+  "Mixtral 8x7B":        { type: "LLM", params: "47B(MoE)", vram_min: 12, vram_rec: 20, ram_min: 16, ram_rec: 32, disk: 90, note: "Mistral MoE（激活13B）。Int4量化12GB可跑。", cat: "llm" },
+  "Mixtral 8x22B":       { type: "LLM", params: "141B(MoE)", vram_min: 24, vram_rec: 40, ram_min: 32, ram_rec: 64, disk: 260, note: "Mistral 超大 MoE。量化後 24GB+。", cat: "llm" },
+  "GLM-4 9B":            { type: "LLM", params: "9B",   vram_min:  8, vram_rec: 12, ram_min:  8, ram_rec: 16, disk: 20, note: "智譜 GLM-4 系列。Int4 量化 8GB。", cat: "llm" },
+  "GLM-4 32B":           { type: "LLM", params: "32B",  vram_min: 20, vram_rec: 28, ram_min: 24, ram_rec: 48, disk: 65, note: "GLM-4 32B 參數版。", cat: "llm" },
+  "Yi 1.5 6B":           { type: "LLM", params: "6B",   vram_min:  4, vram_rec:  8, ram_min:  8, ram_rec: 12, disk: 12, note: "零一萬物開源 LLM。輕量級。", cat: "llm" },
+  "Yi 1.5 34B":          { type: "LLM", params: "34B",  vram_min: 20, vram_rec: 28, ram_min: 24, ram_rec: 48, disk: 65, note: "34B 量化後 20GB+ VRAM。", cat: "llm" },
+  "Gemma 2 9B":          { type: "LLM", params: "9B",   vram_min:  6, vram_rec: 10, ram_min:  8, ram_rec: 16, disk: 18, note: "Google Gemma 2。Int4 量化 6GB。", cat: "llm" },
+  "Gemma 2 27B":         { type: "LLM", params: "27B",  vram_min: 16, vram_rec: 24, ram_min: 24, ram_rec: 32, disk: 55, note: "Google Gemma 2 27B。", cat: "llm" },
+  "Phi-3 3.8B":          { type: "LLM", params: "3.8B", vram_min:  4, vram_rec:  6, ram_min:  4, ram_rec:  8, disk:  8, note: "微軟 Phi-3 小模型，低配友好。", cat: "llm" },
+  "Phi-4 14B":           { type: "LLM", params: "14B",  vram_min: 10, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 28, note: "微軟 Phi-4 最新小模型。", cat: "llm" },
+  "Command R+":          { type: "LLM", params: "104B", vram_min: 48, vram_rec: 64, ram_min: 48, ram_rec: 64, disk: 200, note: "Cohere 大模型。", cat: "llm" },
+  "Falcon 2 11B":        { type: "LLM", params: "11B",  vram_min:  8, vram_rec: 12, ram_min:  8, ram_rec: 16, disk: 22, note: "TII Falcon 2 系列。", cat: "llm" },
+  "Nemotron 4 15B":      { type: "LLM", params: "15B",  vram_min: 10, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 30, note: "NVIDIA 開源 LLM。", cat: "llm" },
+
+  // === 音頻/語音 ===
+  "Whisper Large v3":    { type: "音頻/Speech", params: "~1.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 6, note: "OpenAI 語音識別。低配置可跑。", cat: "audio" },
+  "Bark":                { type: "音頻/Speech", params: "~1B",  vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 8, note: "Suno 文本轉語音。", cat: "audio" },
+  "CosyVoice":           { type: "音頻/Speech", params: "~1B",  vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 8, note: "阿里通義語音合成。", cat: "audio" },
+  "SenseVoice":          { type: "音頻/Speech", params: "~0.6B", vram_min: 2, vram_rec: 4, ram_min: 2, ram_rec: 4, disk: 4, note: "商湯語音識別，輕量高效。", cat: "audio" },
+  "MeloTTS":             { type: "音頻/Speech", params: "~0.3B", vram_min: 2, vram_rec: 4, ram_min: 2, ram_rec: 4, disk: 3, note: "MyShell 開源 TTS。", cat: "audio" },
+
+  // === 多模態 ===
+  "LLaVA 1.6 7B":        { type: "多模態", params: "7B",  vram_min: 8, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 20, note: "多模態視覺-語言模型。", cat: "mm" },
+  "LLaVA 1.6 34B":       { type: "多模態", params: "34B", vram_min: 24, vram_rec: 32, ram_min: 24, ram_rec: 48, disk: 70, note: "LLaVA 34B 大版本。", cat: "mm" },
+  "InternVL2 8B":        { type: "多模態", params: "8B",  vram_min: 8, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 20, note: "上海AI Lab 多模態模型。", cat: "mm" },
+  "InternVL2 26B":       { type: "多模態", params: "26B", vram_min: 18, vram_rec: 24, ram_min: 24, ram_rec: 48, disk: 55, note: "InternVL2 中大型版。", cat: "mm" },
+  "MiniCPM-V 2.6":       { type: "多模態", params: "~8B", vram_min: 6, vram_rec: 10, ram_min: 8, ram_rec: 16, disk: 16, note: "面壁智能多模態，低配友好。", cat: "mm" },
+  "CogVLM2":             { type: "多模態", params: "~19B", vram_min: 12, vram_rec: 18, ram_min: 16, ram_rec: 32, disk: 40, note: "智譜視覺語言模型。", cat: "mm" },
+
+  // === 3D生成 ===
+  "TripoSR":             { type: "3D生成", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 8, ram_rec: 16, disk: 6, note: "Stability AI 單圖轉3D。低配可跑。", cat: "3d" },
+  "Stable Zero123":      { type: "3D生成", params: "~1B", vram_min: 6, vram_rec: 10, ram_min: 8, ram_rec: 16, disk: 8, note: "零樣本 3D 視角生成。", cat: "3d" },
+  "InstantMesh":         { type: "3D生成", params: "~1B", vram_min: 6, vram_rec: 10, ram_min: 8, ram_rec: 16, disk: 8, note: "快速 3D 網格生成。", cat: "3d" },
+
+  // === 🛒 AI夢幻工廠（蝦皮賣場 mazz68）===
+  "HeyGem":              { type: "數位人", params: "~3B", vram_min: 4, vram_rec: 8, ram_min: 8, ram_rec: 16, disk: 15, note: "AI數字人/數位人類，4G顯存可用，支援多人同時驅動。蝦皮搜:AI夢幻工廠", cat: "edit" },
+  "SoulX-Singer":        { type: "AI唱歌", params: "~2B", vram_min: 4, vram_rec: 8, ram_min: 8, ram_rec: 16, disk: 10, note: "AI唱歌神器，歌聲合成。蝦皮搜:AI夢幻工廠", cat: "audio" },
+  "Matanyone":           { type: "摳圖工具", params: "~0.5B", vram_min: 4, vram_rec: 6, ram_min: 8, ram_rec: 16, disk: 5, note: "影片/圖片超精細一鍵摳圖神器。蝦皮搜:AI夢幻工廠", cat: "image" },
+  "AI短視頻引擎":        { type: "視頻生成", params: "~7B", vram_min: 8, vram_rec: 16, ram_min: 16, ram_rec: 32, disk: 30, note: "AI短視頻生成引擎，快速生成行銷短片。蝦皮搜:AI夢幻工廠", cat: "video" },
+  "Codex+DeepSeek":      { type: "代碼生成", params: "~7B", vram_min: 6, vram_rec: 12, ram_min: 16, ram_rec: 32, disk: 25, note: "Codex實戰接入DeepSeek模型，AI代碼生成輔助工具。蝦皮搜:AI夢幻工廠", cat: "llm" },
+
+  // === 🛒 AI夢幻工廠 商品總表（蝦皮 mazz68 全商品）===
+  // --- 影像/AI 創作平台 ---
+  "RunningHub":          { type: "影像平台", params: "—", vram_min: 8, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 10, note: "多模型AI影像影片生成平台，整合多種開源模型。蝦皮:AI夢幻工廠", cat: "image" },
+  "IMAGDressing":        { type: "圖像編輯", params: "~2B", vram_min: 8, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 10, note: "AI一鍵換衣，可自訂模特兒臉孔及姿勢。蝦皮:AI夢幻工廠", cat: "edit" },
+  "IDM-VTON":            { type: "圖像編輯", params: "~3B", vram_min: 8, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 10, note: "IDM-VTON V1.2 AI換衣工具整合包。蝦皮:AI夢幻工廠", cat: "edit" },
+  "Flux-Qwen 雙劍合璧":  { type: "圖像生成", params: "~12B+8B", vram_min: 12, vram_rec: 24, ram_min: 16, ram_rec: 32, disk: 30, note: "Flux+Qwen雙劍合璧AI多功能圖片編輯+圖片生成終極整合包。蝦皮:AI夢幻工廠", cat: "image" },
+  "Anydoor":             { type: "圖像編輯", params: "~3B", vram_min: 8, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 12, note: "Anydoor任意門，可實現隔空換物、一鍵換衣等功能。蝦皮:AI夢幻工廠", cat: "edit" },
+  "One To All-Animation": { type: "視頻生成", params: "~3B", vram_min: 8, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 10, note: "One To All-Animation視訊動作遷移18禁支援NSFW。蝦皮:AI夢幻工廠", cat: "video" },
+  "AI短影片批次合成":    { type: "視頻生成", params: "~3B", vram_min: 8, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 15, note: "AI短影片批次合成工具，大量快速產出短片。蝦皮:AI夢幻工廠", cat: "video" },
+  "AI自動短劇解說":      { type: "視頻生成", params: "~3B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 15, note: "AI自動產生短劇解說影片，輸入一段話就能產生短劇解說影片。蝦皮:AI夢幻工廠", cat: "video" },
+  "AI一鍵影片後製":      { type: "視頻編輯", params: "—", vram_min: 6, vram_rec: 10, ram_min: 8, ram_rec: 16, disk: 10, note: "翻譯+配音+字幕一鍵完成。蝦皮:AI夢幻工廠", cat: "edit" },
+
+  // --- 圖像生成/編輯 ---
+  "LongCat-Image-Turbo": { type: "圖像生成", params: "~12B", vram_min: 8, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 20, note: "LongCat-Image-Turbo高效能AI影像產生編輯神器，支援NSFW。蝦皮:AI夢幻工廠", cat: "image" },
+  "FireRed-Image-Edit":  { type: "圖像編輯", params: "~7B", vram_min: 8, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 18, note: "AI改圖神器，文字修改、老照片修復、虛擬換衣。蝦皮:AI夢幻工廠", cat: "edit" },
+  "FireRed-OCR":         { type: "圖像編輯", params: "~1B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 6, note: "泛用型光學字元辨識工具。蝦皮:AI夢幻工廠", cat: "edit" },
+  "Flux+Qwen":           { type: "圖像生成", params: "~12B", vram_min: 12, vram_rec: 20, ram_min: 16, ram_rec: 32, disk: 25, note: "FLUX+Qwen雙劍合璧，多功能AI圖片編輯+產生。蝦皮:AI夢幻工廠", cat: "image" },
+  "Flux.2-Klein-9B-EA":  { type: "圖像生成", params: "~9B", vram_min: 8, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 18, note: "Flux.2 klein更優秀的換臉方案，更好的擴圖選擇！蝦皮:AI夢幻工廠", cat: "image" },
+  "Qwen-Image-Edit-AIO": { type: "圖像編輯", params: "~8B", vram_min: 8, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 20, note: "通義千問AI改圖一體包，智能圖片編輯。蝦皮:AI夢幻工廠", cat: "edit" },
+  "DreamOmni2":          { type: "圖像編輯", params: "~3B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 10, note: "一句話改圖神器，自然語言操控圖片修改。蝦皮:AI夢幻工廠", cat: "edit" },
+  "Pony Diffusion X":    { type: "圖像生成", params: "~7B", vram_min: 8, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 15, note: "SD架構NSFW成人向圖像模型。蝦皮:AI夢幻工廠", cat: "image" },
+  "FacePoke":            { type: "圖像編輯", params: "~1B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "AI人像表情調整工具，一鍵修改表情。蝦皮:AI夢幻工廠", cat: "edit" },
+  "FacePoke":            { type: "圖像編輯", params: "~1B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "AI人像表情調整工具，一鍵修改表情。蝦皮:AI夢幻工廠", cat: "edit" },
+  "4G低配AI繪圖SD-Forge": { type: "圖像生成", params: "~2B", vram_min: 4, vram_rec: 6, ram_min: 8, ram_rec: 12, disk: 15, note: "4G顯存可玩AI繪畫，Stable Diffusion WebUI Forge優化版。蝦皮:AI夢幻工廠", cat: "image" },
+  "CLIP Interrogator":   { type: "圖像工具", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "CLIP Interrogator用AI分析圖片輕鬆產出完美圖片。蝦皮:AI夢幻工廠", cat: "image" },
+  "Wan2.2_SmoothMixV20": { type: "視頻生成", params: "~14B", vram_min: 12, vram_rec: 20, ram_min: 16, ram_rec: 32, disk: 25, note: "Wan2.2 進階版平滑融合，影片過渡更自然。蝦皮:AI夢幻工廠", cat: "video" },
+
+  // --- LLM/程式碼 ---
+  "Qwen3.6-Plus":        { type: "LLM", params: "~32B", vram_min: 20, vram_rec: 28, ram_min: 24, ram_rec: 48, disk: 65, note: "最新程式設計AI，Agent能力強大，一般人也能寫軟體。蝦皮:AI夢幻工廠", cat: "llm" },
+
+  // --- 音頻/音樂/語音 ---
+  "Stable Audio 3":      { type: "音樂生成", params: "~1.4B", vram_min: 6, vram_rec: 10, ram_min: 8, ram_rec: 16, disk: 10, note: "StableAudio3文字變音樂從音效到完整歌曲一鍵產生高品質長音訊整合包。蝦皮:AI夢幻工廠", cat: "audio" },
+  "DiffRhythm":          { type: "音樂生成", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "AI歌曲創作，生成完整歌曲含人聲。蝦皮:AI夢幻工廠", cat: "audio" },
+  "RVC":                 { type: "語音克隆", params: "~0.3B", vram_min: 4, vram_rec: 6, ram_min: 4, ram_rec: 8, disk: 5, note: "RVC高品質語音複製及AI變聲器，支援聲音克隆、直播變聲、AI唱歌。蝦皮:AI夢幻工廠", cat: "audio" },
+  "VPot":                { type: "語音合成", params: "~0.5B", vram_min: 2, vram_rec: 4, ram_min: 2, ram_rec: 4, disk: 3, note: "文字轉語音軟體（免費）。蝦皮:AI夢幻工廠", cat: "audio" },
+  "NovaSR":              { type: "音頻增強", params: "~0.3B", vram_min: 2, vram_rec: 4, ram_min: 2, ram_rec: 4, disk: 3, note: "AI音質/音頻增強修復工具。蝦皮:AI夢幻工廠", cat: "audio" },
+
+  // --- 換臉/換衣/其他 ---
+  "AI換臉工具三合一":    { type: "換臉工具", params: "~3B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 12, note: "照片+影片+視訊3合1換臉，支援18+。蝦皮:AI夢幻工廠", cat: "edit" },
+  "AIO一鍵摳圖換背景":   { type: "摳圖工具", params: "~0.5B", vram_min: 4, vram_rec: 6, ram_min: 4, ram_rec: 8, disk: 5, note: "AI一鍵摳圖更換背景軟體。蝦皮:AI夢幻工廠", cat: "image" },
+  "AI提示詞優化器":      { type: "圖像工具", params: "~0.3B", vram_min: 2, vram_rec: 4, ram_min: 2, ram_rec: 4, disk: 3, note: "AI提示詞/咒語優化工具，提升出圖品質。蝦皮:AI夢幻工廠", cat: "image" },
+  "Anime 4K影片修復":    { type: "視頻編輯", params: "~1B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 8, note: "AI動畫/影片4K修復增強。蝦皮:AI夢幻工廠", cat: "edit" },
+
+  // ════════════════════════════════════════════════════════════════
+  // 🛒 AI夢幻工廠 第二批（頁4~6補完）
+  // ════════════════════════════════════════════════════════════════
+  "PixWit":              { type: "圖像工具", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "截圖+錄影+剪輯+AI翻譯一體工具。蝦皮:AI夢幻工廠", cat: "edit" },
+  "Roop Unleashed":      { type: "換臉工具", params: "~2B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 10, note: "Roop Unleashed換臉工具中文版，支援批量換臉、直播換臉。蝦皮:AI夢幻工廠", cat: "edit" },
+  "Bernini-v1":          { type: "視頻生成", params: "~7B", vram_min: 8, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 20, note: "【小Seedance】Bernini-v1你的專屬AI影音魔法師！一鍵生成與編輯，讓創意無限放大！蝦皮:AI夢幻工廠", cat: "video" },
+  "StableAvatar":        { type: "數位人", params: "~3B", vram_min: 8, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 12, note: "StableAvatar一張照片+一段音訊=你的AI數字人，真人說話影片生成器。蝦皮:AI夢幻工廠", cat: "video" },
+  "Z-Image-Turbo-xitu":  { type: "圖像生成", params: "~12B", vram_min: 8, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 18, note: "AI重繪改圖，Z-Image Turbo加速版。蝦皮:AI夢幻工廠", cat: "image" },
+  "Omni Voice":          { type: "語音克隆", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 6, note: "Omni Voice支援600+語言的語音複製和字幕生成語音，超快自然配音神器。蝦皮:AI夢幻工廠", cat: "audio" },
+  "F5-TTS":              { type: "語音克隆", params: "~0.3B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 6, note: "F5-TTS AI聲音克隆軟件，人聲模仿訓練合成，文字生成語音新媒體工具。蝦皮:AI夢幻工廠", cat: "audio" },
+  "Fun-CineForge":       { type: "音頻工具", params: "~1B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 8, note: "Fun-CineForge用AI為電影電視劇一鍵自動配音，零樣本超自然效果。蝦皮:AI夢幻工廠", cat: "audio" },
+  "Faster Qwen3-TTS":    { type: "語音合成", params: "~1B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 6, note: "即時語音合成，Qwen3架構加速版。蝦皮:AI夢幻工廠", cat: "audio" },
+  "HelloMeme":           { type: "圖像工具", params: "~1B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "AI迷因梗圖表情包產生器。蝦皮:AI夢幻工廠", cat: "image" },
+  "MimicMotion":         { type: "視頻生成", params: "~3B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 12, note: "MimicMotion V1.0一張圖片生成跳舞影片，AI動作遷移工具。蝦皮:AI夢幻工廠", cat: "video" },
+"Nvidia-vfx":          { type: "視頻編輯", params: "~0.5B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 10, note: "Nvidia-vfx輕鬆把模糊、低清、壓縮嚴重的老視頻瞬間變成高清大片。蝦皮:AI夢幻工廠", cat: "edit" },
+  "SoulX-FlashHead V2":  { type: "數位人", params: "~3B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 12, note: "即時數位人/數字人，SoulX系列Flash頭像版。蝦皮:AI夢幻工廠", cat: "video" },
+  "Audiocraft":          { type: "音樂生成", params: "~1B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 8, note: "文字轉音樂/音效生成。蝦皮:AI夢幻工廠", cat: "audio" },
+  "Wan2.2-Dasiwa":       { type: "視頻生成", params: "~14B", vram_min: 12, vram_rec: 20, ram_min: 16, ram_rec: 32, disk: 25, note: "Wan2.2動漫影片特化版。蝦皮:AI夢幻工廠", cat: "video" },
+  "RMBG":                { type: "摳圖工具", params: "~0.2B", vram_min: 2, vram_rec: 4, ram_min: 2, ram_rec: 4, disk: 3, note: "AI圖像背景去除工具，輕量高效。蝦皮:AI夢幻工廠", cat: "image" },
+  "FlashVSR_Ultra_Fast": { type: "視頻編輯", params: "~1B", vram_min: 8, vram_rec: 16, ram_min: 8, ram_rec: 16, disk: 10, note: "FlashVSR_Ultra_Fast圖片影片高清放大，8G顯存可用，支援批次任務。蝦皮:AI夢幻工廠", cat: "edit" },
+  "Qwen-Image-Layered":  { type: "圖像編輯", params: "~7B", vram_min: 8, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 15, note: "AI圖層分離，圖片分層編輯。蝦皮:AI夢幻工廠", cat: "edit" },
+  "MMAudio":             { type: "音頻工具", params: "~1B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 8, note: "MMAudio (NSFW版) 無聲視頻一鍵AI同步配音超自然。蝦皮:AI夢幻工廠", cat: "audio" },
+  "Ultra-SD-v2.2":       { type: "圖像生成", params: "~1B", vram_min: 2, vram_rec: 4, ram_min: 4, ram_rec: 8, disk: 6, note: "Intel Core Ultra內顯可運行的輕量SD。蝦皮:AI夢幻工廠", cat: "image" },
+  "FoleyCrafter":        { type: "音頻工具", params: "~1B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 8, note: "FoleyCrafter自動幫影片配音的AI工具，讓你輕鬆創作專業級影片。蝦皮:AI夢幻工廠", cat: "audio" },
+  "GLM-Image":           { type: "圖像生成", params: "~7B", vram_min: 8, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 15, note: "智譜出品中文海報/圖片生成。蝦皮:AI夢幻工廠", cat: "image" },
+  "Kandinsky 5":         { type: "視頻生成", params: "~3B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 15, note: "輕量級圖文生影片模型。蝦皮:AI夢幻工廠", cat: "video" },
+  "AI影片消除":          { type: "視頻編輯", params: "~1B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 8, note: "影片移除移動物體/固定物體。蝦皮:AI夢幻工廠", cat: "edit" },
+  "AI去水印":            { type: "視頻編輯", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "影片智能去除水印神器。蝦皮:AI夢幻工廠", cat: "edit" },
+  "AI字幕助手":          { type: "視頻編輯", params: "~0.5B", vram_min: 2, vram_rec: 4, ram_min: 2, ram_rec: 4, disk: 3, note: "AI自動生成字幕工具。蝦皮:AI夢幻工廠", cat: "edit" },
+  // --- 頁5 ---
+  "JoyAI-Image-Edit":    { type: "圖像編輯", params: "~3B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 12, note: "JoyAI多合一圖像編輯工具。蝦皮:AI夢幻工廠", cat: "edit" },
+  "ACE-Step+HearMuLa":   { type: "音樂生成", params: "~1B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 8, note: "ACE-Step + HearMuLa🚀 2合1音樂歌曲生成創作工具。蝦皮:AI夢幻工廠", cat: "audio" },
+  "VoXCPM2":             { type: "語音合成", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "AI語音合成/歌聲合成工具。蝦皮:AI夢幻工廠", cat: "audio" },
+  "Wan-Animate neo":     { type: "視頻生成", params: "~14B", vram_min: 12, vram_rec: 20, ram_min: 16, ram_rec: 32, disk: 25, note: "最新Wan-Animate neo人物替換+服裝替換+動作遷移整合包。蝦皮:AI夢幻工廠", cat: "video" },
+  "Editmgt":             { type: "圖像編輯", params: "~3B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 12, note: "AI圖像編輯工具。蝦皮:AI夢幻工廠", cat: "edit" },
+  "SenseNova":           { type: "圖像生成", params: "~7B", vram_min: 8, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 20, note: "商湯日日新AI影像/視頻模型。蝦皮:AI夢幻工廠", cat: "image" },
+  "DreamO":              { type: "視頻生成", params: "~7B", vram_min: 8, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 20, note: "圖片轉影片生成工具。蝦皮:AI夢幻工廠", cat: "video" },
+  "HeartMuLa":           { type: "音樂生成", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "AI音樂創作工具。蝦皮:AI夢幻工廠", cat: "audio" },
+  "LongCat-AudioDiT":    { type: "語音合成", params: "~1B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 6, note: "高品質語音/TTS合成。蝦皮:AI夢幻工廠", cat: "audio" },
+  "Ideogram 4":          { type: "圖像生成", params: "~7B", vram_min: 8, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 20, note: "文字嵌入圖片生成，精確文字渲染。蝦皮:AI夢幻工廠", cat: "image" },
+  "FASHN VTON":          { type: "圖像編輯", params: "~2B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 10, note: "FASHN VTON AI虛擬試穿+換裝，逼真試穿，電商與時尚利器。蝦皮:AI夢幻工廠", cat: "edit" },
+  "DarkBeast-FaceSwap":  { type: "換臉工具", params: "~2B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 10, note: "DarkBeast-FaceSwap無縫、逼真一鍵換頭(臉)。蝦皮:AI夢幻工廠", cat: "edit" },
+  "DreamID-V":           { type: "換臉工具", params: "~2B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 10, note: "AI換臉/換ID工具。蝦皮:AI夢幻工廠", cat: "edit" },
+  "ERNIE-Image-Turbo":   { type: "圖像生成", params: "~7B", vram_min: 8, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 20, note: "百度文心一格加速版圖像生成。蝦皮:AI夢幻工廠", cat: "image" },
+  "Woosh":               { type: "音頻工具", params: "~0.5B", vram_min: 2, vram_rec: 4, ram_min: 2, ram_rec: 4, disk: 3, note: "Woosh文字+影片一鍵產生逼真音效，AI音效產生/影片配音一鍵整合包。蝦皮:AI夢幻工廠", cat: "audio" },
+  "SCAIL 2-GGUF":        { type: "視頻生成", params: "~7B", vram_min: 8, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 20, note: "SCAIL 2-GGUF多角色動作遷移AI影片模型，支援NSFW，自動高清。蝦皮:AI夢幻工廠", cat: "video" },
+  // --- 頁6 ---
+  "MatAnyone2":          { type: "摳圖工具", params: "~0.5B", vram_min: 4, vram_rec: 6, ram_min: 4, ram_rec: 8, disk: 6, note: "MatAnyone升級版，影片/圖片超精細摳圖。蝦皮:AI夢幻工廠", cat: "image" },
+  "MiniMax-Remover":     { type: "圖像工具", params: "~1B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "MiniMax移除路人/水印工具。蝦皮:AI夢幻工廠", cat: "edit" },
+  "Lens-Turbo":          { type: "圖像生成", params: "~3B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 12, note: "Lens-Turbo輕量創意文生圖，快速創作創意圖像一鍵整合包。蝦皮:AI夢幻工廠", cat: "image" },
+  "Face Aging":          { type: "圖像編輯", params: "~1B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "AI人臉年齡調整/老化/年輕化。蝦皮:AI夢幻工廠", cat: "edit" },
+  "AI畫面穩定修復":      { type: "視頻編輯", params: "~1B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 8, note: "AI驅動畫面穩定與修復。蝦皮:AI夢幻工廠", cat: "edit" },
+  "DramaBox":            { type: "音頻工具", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "DramaBox本地端AI配音工作室。蝦皮:AI夢幻工廠", cat: "audio" },
+  "F5-TTS":              { type: "語音合成", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "聲音克隆/語音合成工具。蝦皮:AI夢幻工廠", cat: "audio" },
+  "Ming-omni-tts":       { type: "語音合成", params: "~3B", vram_min: 8, vram_rec: 16, ram_min: 8, ram_rec: 16, disk: 12, note: "TTS新王炸！Ming-omni-tts一個模型搞定語音/音樂/音效，還能聽懂你的情緒指令。蝦皮:AI夢幻工廠", cat: "audio" },
+  "VideoLingo+IndexTTS": { type: "視頻編輯", params: "~2B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 15, note: "VideoLingo3.0+Index-TTS2.0全自動影片翻譯。蝦皮:AI夢幻工廠", cat: "edit" },
+  "ProPainter":          { type: "視頻編輯", params: "~1B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 8, note: "ProPainter用AI隨手把影片裡的路人、水印、誤入鏡頭全部消失。蝦皮:AI夢幻工廠", cat: "edit" },
+  "LTX2.3-EditAnything": { type: "視頻編輯", params: "~7B", vram_min: 8, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 18, note: "LTX2.3-EditAnything用提示詞輕鬆改影片：加物、刪物、換物、換風格一句話搞定。蝦皮:AI夢幻工廠", cat: "edit" },
+  "Klein_Edit":          { type: "圖像編輯", params: "~3B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 12, note: "Klein_Edit-AI多合一圖像編輯器，局部替換、萬物遷移、人物特性、服裝提取、服裝試穿，開箱即用多功能AI整合包。蝦皮:AI夢幻工廠", cat: "edit" },
+  "AI短片工廠":          { type: "視頻生成", params: "~3B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 12, note: "AI短片工廠Short Video Factory，影片生成智慧剪輯軟體。蝦皮:AI夢幻工廠", cat: "video" },
+  "AI多媒體工具箱":      { type: "圖像工具", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 8, note: "AI多媒體一體化工具箱。蝦皮:AI夢幻工廠", cat: "edit" },
+  "AI臉部打碼":          { type: "視頻編輯", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "AI臉部自動追蹤並即時打碼。蝦皮:AI夢幻工廠", cat: "edit" },
+  "AI魔法橡皮擦":        { type: "圖像工具", params: "~0.5B", vram_min: 2, vram_rec: 4, ram_min: 2, ram_rec: 4, disk: 3, note: "AI圖片魔法橡皮擦去瑕疵。蝦皮:AI夢幻工廠", cat: "image" },
+  "Think Video":         { type: "圖像工具", params: "~0.3B", vram_min: 2, vram_rec: 4, ram_min: 2, ram_rec: 4, disk: 3, note: "AI影片提示詞/腳本生成工具。蝦皮:AI夢幻工廠", cat: "edit" },
+
+  // 🆕 本次分類補完 — AI夢幻工廠（8分類掃描）
+  "VisoMaster":              { type: "換臉工具", params: "~2B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 10, note: "新一代AI換臉神器：影片/直播/照片換臉，一鍵解鎖創意無限！蝦皮:AI夢幻工廠", cat: "edit" },
+  "AI碼賽克去除":            { type: "圖像工具", params: "~1B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "AI黑科技簡單易用的碼賽克去除工具。蝦皮:AI夢幻工廠", cat: "image" },
+  "AI一鍵換臉離線版":        { type: "換臉工具", params: "~2B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 8, note: "AI一鍵換臉軟體離線版，無需聯網0費用。蝦皮:AI夢幻工廠", cat: "edit" },
+  "安卓AI換臉APP":           { type: "換臉工具", params: "~1B", vram_min: 0, vram_rec: 0, ram_min: 4, ram_rec: 8, disk: 3, note: "安卓手機AI換臉神器APP，NSFW照片+影片換臉。蝦皮:AI夢幻工廠", cat: "edit" },
+  "AI相片修圖工具":          { type: "圖像工具", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "AI相片修圖+人像修圖+美顏瘦身+降噪換背景+移除人物。蝦皮:AI夢幻工廠", cat: "image" },
+  "安卓AI人臉編輯器":        { type: "圖像工具", params: "~0.5B", vram_min: 0, vram_rec: 0, ram_min: 4, ram_rec: 8, disk: 3, note: "安卓AI人臉編輯器APP手機版。蝦皮:AI夢幻工廠", cat: "image" },
+  "AI一鍵換裝換姿勢":        { type: "圖像工具", params: "~3B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 10, note: "AI一鍵換裝+換姿勢，虛擬造型師。蝦皮:AI夢幻工廠", cat: "image" },
+  "Deep-Live-Cam Pro":       { type: "換臉工具", params: "~3B", vram_min: 8, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 15, note: "AI圖片影片換臉+直播換臉整合包。蝦皮:AI夢幻工廠", cat: "edit" },
+  "FaceFusion":              { type: "換臉工具", params: "~3B", vram_min: 8, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 15, note: "FaceFusion一鍵換臉軟體，支援圖片/影片/直播，支援50系列顯卡。蝦皮:AI夢幻工廠", cat: "edit" },
+  "電商AI換衣王者":          { type: "圖像工具", params: "~3B", vram_min: 8, vram_rec: 16, ram_min: 8, ram_rec: 16, disk: 12, note: "電商AI換衣王者，實現萬物換萬物，還原度極高！蝦皮:AI夢幻工廠", cat: "image" },
+  "LTX-2.3-GGUF":            { type: "視頻生成", params: "~7B", vram_min: 8, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 15, note: "LTX-2.3-GGUF文生影片/首尾影格，支援NSFW。蝦皮:AI夢幻工廠", cat: "video" },
+  "LTX 2.3 AIO":             { type: "視頻生成", params: "~7B", vram_min: 12, vram_rec: 20, ram_min: 16, ram_rec: 24, disk: 20, note: "LTX 2.3 AIO多模態AI影音生成器支援NSFW。蝦皮:AI夢幻工廠", cat: "video" },
+  "Wan2.2-Remix V3":         { type: "視頻生成", params: "~14B", vram_min: 12, vram_rec: 20, ram_min: 16, ram_rec: 32, disk: 25, note: "Wan2.2-Remix V3：完美支援NSFW，解鎖AI影片創作的無限可能，專注人物動態、逼真運動與場景一致性。蝦皮:AI夢幻工廠", cat: "video" },
+  "影片轉圖文AI工具":        { type: "視頻編輯", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "自動將影片轉為圖文下載的AI工具。蝦皮:AI夢幻工廠", cat: "edit" },
+  "SVI 2.0Pro":              { type: "視頻生成", params: "~7B", vram_min: 12, vram_rec: 20, ram_min: 16, ram_rec: 24, disk: 20, note: "Stable Video Infinity 2.0Pro無限穩定成生長影片。蝦皮:AI夢幻工廠", cat: "video" },
+  "Framepack":               { type: "視頻生成", params: "~3B", vram_min: 8, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 15, note: "AI圖片生成視頻，支援首尾幀過渡，可生成120秒視頻。蝦皮:AI夢幻工廠", cat: "video" },
+  "LTX-2影音畫同步":         { type: "視頻生成", params: "~7B", vram_min: 12, vram_rec: 20, ram_min: 16, ram_rec: 24, disk: 20, note: "LTX-2影音畫同步生成！開源視訊模型新王。蝦皮:AI夢幻工廠", cat: "video" },
+  "Wan2.2-SVI2-Remix":       { type: "視頻生成", params: "~14B", vram_min: 12, vram_rec: 20, ram_min: 16, ram_rec: 24, disk: 25, note: "Wan2.2-SVI2-Pro-remix 2026最強NSFW圖生影片神器。蝦皮:AI夢幻工廠", cat: "video" },
+  "混元視頻工具V1.3":        { type: "視頻生成", params: "~13B", vram_min: 12, vram_rec: 20, ram_min: 16, ram_rec: 32, disk: 25, note: "AI文字圖片生成視頻，混元視頻工具V1.3，新增圖生視頻，不限時長，任意分辨率，解壓即用。蝦皮:AI夢幻工廠", cat: "video" },
+  "影片分割大師":            { type: "視頻編輯", params: "~0.3B", vram_min: 2, vram_rec: 4, ram_min: 4, ram_rec: 8, disk: 3, note: "無損分割，一鍵搞定，視訊處理神器。蝦皮:AI夢幻工廠", cat: "edit" },
+  "AniPortrait":             { type: "視頻生成", params: "~1B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 8, note: "音視頻驅動圖片說話唱歌小工具。蝦皮:AI夢幻工廠", cat: "video" },
+  "Sora2去浮水印":           { type: "視頻編輯", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "Sora2影片去浮水印整合包。蝦皮:AI夢幻工廠", cat: "edit" },
+  "影音文案擷取助手":        { type: "視頻編輯", params: "~0.3B", vram_min: 2, vram_rec: 4, ram_min: 4, ram_rec: 8, disk: 3, note: "輕鬆搞定文案提取！一鍵擷取影片字幕，無次數限制。蝦皮:AI夢幻工廠", cat: "edit" },
+  "Sora影片水印清除器":      { type: "視頻編輯", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "Sora影片水印清除器。蝦皮:AI夢幻工廠", cat: "edit" },
+  "AI影片消除萬物":          { type: "視頻編輯", params: "~1B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 10, note: "AI影片消除萬物，移動物體或固定物體（包括人物、物體、浮水印、字幕、Sora2水印等）。蝦皮:AI夢幻工廠", cat: "edit" },
+  "MiniMax-Remover":          { type: "視頻編輯", params: "~1B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 8, note: "MiniMax-Remover高效影片中物件移除工具。蝦皮:AI夢幻工廠", cat: "edit" },
+  "AI一鍵歌曲創作":          { type: "音樂生成", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "從從容容AI一鍵歌曲創作工具。蝦皮:AI夢幻工廠", cat: "audio" },
+  "照片說話唱歌APP":         { type: "語音合成", params: "~0.5B", vram_min: 0, vram_rec: 0, ram_min: 4, ram_rec: 8, disk: 3, note: "讓照片說話唱歌+影片配音對口數字人APP安卓版。蝦皮:AI夢幻工廠", cat: "audio" },
+  "安卓AI換臉神器":          { type: "換臉工具", params: "—", vram_min: 0, vram_rec: 0, ram_min: 4, ram_rec: 8, disk: 2, note: "安卓手機AI換臉神器，NSFW一鍵變身，照片+影片隨心換，可先試用。蝦皮:AI夢幻工廠", cat: "edit" },
+  "音樂合併神器":            { type: "音樂生成", params: "~0.2B", vram_min: 2, vram_rec: 4, ram_min: 2, ram_rec: 4, disk: 2, note: "超簡單音樂合併神器，讓歌單一鍵連成一首。蝦皮:AI夢幻工廠", cat: "audio" },
+  "ACE-Step音樂生成":        { type: "音樂生成", params: "~1B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "ACE-Step AI音樂生成器，支援中文。蝦皮:AI夢幻工廠", cat: "audio" },
+  "ClearerVoice":            { type: "音頻增強", params: "~0.3B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 4, note: "AI人聲分離軟體，可分離歌曲伴奏和人聲。蝦皮:AI夢幻工廠", cat: "audio" },
+  "Edge-TTS":                { type: "語音合成", params: "—", vram_min: 0, vram_rec: 0, ram_min: 2, ram_rec: 4, disk: 1, note: "Edge-TTS電腦端微軟TTS配音工具（文字轉語音）。蝦皮:AI夢幻工廠", cat: "audio" },
+  "Audio_separator":         { type: "音頻增強", params: "~0.3B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 4, note: "音頻人聲/樂器分離工具。蝦皮:AI夢幻工廠", cat: "audio" },
+  "GPT-SoVITS V4":           { type: "語音克隆", params: "~1B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 15, note: "GPT-SoVITS V4最強的AI語音複製、文字轉語音軟體。蝦皮:AI夢幻工廠", cat: "audio" },
+  "MOSS-TTS":                { type: "語音合成", params: "~1B", vram_min: 8, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 10, note: "MOSS-TTS,介面API,語音合成,8G顯存可用,聲音複製,TTS,支援超長文字,支援50系顯示卡,支援老顯示卡。蝦皮:AI夢幻工廠", cat: "audio" },
+  "Hallo V2":                { type: "語音合成", params: "~3B", vram_min: 8, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 15, note: "最新AI數位人Hallo V2，可產生4K超高清+1小時超長影片。蝦皮:AI夢幻工廠", cat: "video" },
+  "LivePortrait V3":         { type: "圖像編輯", params: "~2B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 10, note: "LivePortrait V3精確的肖像編輯，精準操控五官眉毛鼻子搖頭眨眼撇嘴，本地一鍵整合包。蝦皮:AI夢幻工廠", cat: "edit" },
+  "Easy-Voice-Toolkit":      { type: "語音合成", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 8, note: "語音辨識+聲音克隆+模型訓練一個工俱全搞定！蝦皮:AI夢幻工廠", cat: "audio" },
+  "VibeVoice 2026":          { type: "語音合成", params: "~1B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 10, note: "【VibeVoice 2026最強中文AI配音員來了！】蝦皮:AI夢幻工廠", cat: "audio" },
+  "LLM-TTS":                 { type: "語音克隆", params: "~0.5B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 8, note: "AI 3秒極速語音克隆工具。蝦皮:AI夢幻工廠", cat: "audio" },
+  "Infinite Talk":           { type: "語音合成", params: "~3B", vram_min: 8, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 15, note: "全新數字人AI模型，實現無限時長視訊說話唱歌。蝦皮:AI夢幻工廠", cat: "video" },
+  "PilotTTS":                { type: "語音克隆", params: "~1B", vram_min: 8, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 10, note: "語音克隆AI配音套件8G顯存可跑，情緒+副語言精準控制。蝦皮:AI夢幻工廠", cat: "audio" },
+  "HunyuanVideo-Foley":      { type: "視頻編輯", params: "~1B", vram_min: 8, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 12, note: "AI視訊配音自動辨識影片內容生成配音。蝦皮:AI夢幻工廠", cat: "edit" },
+  "VideoCaptioner":          { type: "視頻編輯", params: "~0.3B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 6, note: "VideoCaptioner AI影片字幕助手，智能字幕革命一鍵聽音生成字幕，打造高品質影片。蝦皮:AI夢幻工廠", cat: "edit" },
+  "Fun_ASR":                 { type: "音頻工具", params: "~0.3B", vram_min: 2, vram_rec: 4, ram_min: 4, ram_rec: 8, disk: 5, note: "Fun_ASR視訊和即時麥克風語音轉文字，音訊+視訊支援批次轉錄器。蝦皮:AI夢幻工廠", cat: "audio" },
+  "indexTTS V2":             { type: "語音克隆", params: "~1B", vram_min: 6, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 10, note: "AI配音克隆聲音indexTTS V2整合包，超強情感表達。蝦皮:AI夢幻工廠", cat: "audio" },
+  "語音合成工具(Electron)":  { type: "語音合成", params: "~0.3B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "語音合成工具，Electron+Vue+ElementPlus+Vite建置。蝦皮:AI夢幻工廠", cat: "audio" },
+  "AI照片編輯器安卓版":      { type: "圖像工具", params: "~0.3B", vram_min: 0, vram_rec: 0, ram_min: 4, ram_rec: 8, disk: 3, note: "AI照片編輯器安卓版。蝦皮:AI夢幻工廠", cat: "image" },
+  "ComfyUI工作流課程":       { type: "圖像工具", params: "—", vram_min: 0, vram_rec: 0, ram_min: 0, ram_rec: 0, disk: 1, note: "全網最全的ComfyUI工作流教學課程。蝦皮:AI夢幻工廠", cat: "image" },
+  "AI圖片清晰放大工具":      { type: "圖像工具", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "實用AI圖片清晰放大工具。蝦皮:AI夢幻工廠", cat: "image" },
+  "AI繪圖設計工具":          { type: "圖像生成", params: "~3B", vram_min: 8, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 10, note: "文生圖+圖生圖+指令修圖+改背景換衣服，零基礎5分鐘。蝦皮:AI夢幻工廠", cat: "image" },
+  "鮮藝AI摳圖":              { type: "圖像工具", params: "~0.3B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 3, note: "離線毫秒摳圖神器。蝦皮:AI夢幻工廠", cat: "image" },
+  "STranslate":              { type: "圖像工具", params: "~0.3B", vram_min: 2, vram_rec: 4, ram_min: 2, ram_rec: 4, disk: 3, note: "即用即走的翻譯、OCR工具。蝦皮:AI夢幻工廠", cat: "image" },
+  "Photo Retouch":           { type: "圖像工具", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "AI消除與摳圖軟體photo retouch。蝦皮:AI夢幻工廠", cat: "image" },
+  "AI繪畫提示詞庫":          { type: "圖像工具", params: "—", vram_min: 0, vram_rec: 0, ram_min: 0, ram_rec: 0, disk: 1, note: "1800個AI繪畫提示詞庫提示詞咒語。蝦皮:AI夢幻工廠", cat: "image" },
+  "AI碼賽克去除工具":        { type: "圖像工具", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "AI黑科技，簡單易用的碼賽克去除工具。蝦皮:AI夢幻工廠", cat: "edit" },
+  "AI截圖分析工具":          { type: "圖像工具", params: "~0.5B", vram_min: 4, vram_rec: 8, ram_min: 4, ram_rec: 8, disk: 5, note: "截一下秒懂一切，翻譯文字擷取等。蝦皮:AI夢幻工廠", cat: "image" },
+  "SD提示詞骨圖":            { type: "圖像工具", params: "—", vram_min: 0, vram_rec: 0, ram_min: 0, ram_rec: 0, disk: 1, note: "StableDiffusion提示詞+案例+結構模型骨圖等。蝦皮:AI夢幻工廠", cat: "image" },
+  "多模型部署工具":          { type: "LLM", params: "—", vram_min: 4, vram_rec: 8, ram_min: 8, ram_rec: 16, disk: 10, note: "一款強大且靈活的本地綜合多模型部署工具。蝦皮:AI夢幻工廠", cat: "llm" },
+  "OpenCode":                { type: "LLM", params: "—", vram_min: 8, vram_rec: 16, ram_min: 16, ram_rec: 32, disk: 20, note: "開源AI編碼代理開箱即用，遠端幫你安裝到好。蝦皮:AI夢幻工廠", cat: "llm" },
+  "ShortDrama":              { type: "視頻生成", params: "~3B", vram_min: 8, vram_rec: 16, ram_min: 12, ram_rec: 24, disk: 15, note: "本地端+線上精品AI短劇製作整合包。蝦皮:AI夢幻工廠", cat: "video" },
+  "CineTTS-Studio":          { type: "音頻/語音", params: "~1.5B", vram_min: 8, vram_rec: 12, ram_min: 8, ram_rec: 16, disk: 10, note: "語音克隆AI配音套件。8G顯存可跑，情緒+副語言精準控制。蝦皮:AI夢幻工廠", cat: "audio" },
+};
+
+// ========================================================================
+// 硬體狀態
+// ========================================================================
+var pc = { os: "", cpu: "", cpuCores: navigator.hardwareConcurrency || 0, ramGB: 0, gpu: "", vramGB: 0, diskGB: 0, sensors: [], systemConfigLoaded: false };
+
+// ========================================================================
+// GPU 型號 → 顯存對照表（依型號精確匹配，更特定者優先）
+// ========================================================================
+const GPU_VRAM_DB = [
+  // ════════════════════════════════════════════════════════════════
+  // NVIDIA GeForce RTX 50 系列（筆電優先）
+  // ════════════════════════════════════════════════════════════════
+  [/rtx 5090 laptop\b/, 24], [/rtx 5080 laptop\b/, 16],
+  [/rtx 5070 ti laptop\b/, 12], [/rtx 5070 laptop\b/, 8],
+  [/rtx 5060 laptop\b/, 8],
+  [/rtx 5090m\b/, 24], [/rtx 5080m\b/, 16],
+  [/rtx 5070 ti m\b/, 12], [/rtx 5070m\b/, 8],
+  [/rtx 5060m\b/, 8],
+  // RTX 50 系列桌上型
+  // RTX 50 系列桌上型
+  [/rtx 5090\b/, 32], [/rtx 5080\b/, 24], [/rtx 5070 ti\b/, 16], [/rtx 5070\b/, 12],
+  [/rtx 5060 ti\b/, 8], [/rtx 5060\b/, 8],
+
+  // ════════════════════════════════════════════════════════════════
+  // NVIDIA GeForce RTX 40 系列（筆電優先）
+  // ════════════════════════════════════════════════════════════════
+  [/rtx 4090m\b/, 16], [/rtx 4090 laptop\b/, 16], [/rtx 4080 laptop\b/, 12],
+  [/rtx 4070 laptop\b/, 8], [/rtx 4060 laptop\b/, 8], [/rtx 4050 laptop\b/, 6],
+  [/rtx 4090 mobile\b/, 16], [/rtx 4080 mobile\b/, 12],
+  [/rtx 4070 mobile\b/, 8], [/rtx 4060 mobile\b/, 8], [/rtx 4050 mobile\b/, 6],
+  // RTX 40 系列桌上型
+  [/rtx 4090\b/, 24], [/rtx 4080 super\b/, 16], [/rtx 4080\b/, 16],
+  [/rtx 4070 ti super\b/, 16], [/rtx 4070 ti\b/, 12], [/rtx 4070 super\b/, 12], [/rtx 4070\b/, 12],
+  [/rtx 4060 ti\s*16\b/, 16], [/rtx 4060 ti\b/, 8], [/rtx 4060\b/, 8],
+  [/rtx 4050\b/, 6],
+
+  // ════════════════════════════════════════════════════════════════
+  // NVIDIA GeForce RTX 30 系列（筆電優先）
+  // ════════════════════════════════════════════════════════════════
+  [/rtx 3080 ti laptop\b/, 16], [/rtx 3080 laptop\b/, 8],
+  [/rtx 3070 ti laptop\b/, 8], [/rtx 3070 laptop\b/, 8],
+  [/rtx 3060 laptop\b/, 6],
+  [/rtx 3050 ti laptop\b/, 4], [/rtx 3050 laptop\b/, 4],
+  [/rtx 3080m\b/, 8], [/rtx 3070m\b/, 8],
+  [/rtx 3060m\b/, 6], [/rtx 3050m\b/, 4],
+  [/rtx 3080 mobile\b/, 8], [/rtx 3070 mobile\b/, 8],
+  [/rtx 3060 mobile\b/, 6], [/rtx 3050 mobile\b/, 4],
+  // RTX 30 系列桌上型
+  [/rtx 3090 ti\b/, 24], [/rtx 3090\b/, 24],
+  [/rtx 3080 ti\b/, 12], [/rtx 3080\b/, 10], [/rtx 3080\s+12g\b/, 12],
+  [/rtx 3070 ti\b/, 8], [/rtx 3070\b/, 8],
+  [/rtx 3060 ti\b/, 8],
+  [/rtx 3060\s*12g\b/, 12], [/rtx 3060\s*8g\b/, 8],
+  [/rtx 3060\b/, 12], // 桌面版預設 12GB
+  [/rtx 3050\b/, 6],
+
+  // ════════════════════════════════════════════════════════════════
+  // NVIDIA GeForce RTX 20 系列（筆電優先）
+  // ════════════════════════════════════════════════════════════════
+  [/rtx 2080 super laptop\b/, 8], [/rtx 2080 laptop\b/, 8],
+  [/rtx 2070 laptop\b/, 8], [/rtx 2060 laptop\b/, 6],
+  [/rtx 2050 laptop\b/, 4],
+  [/rtx 2080m\b/, 8], [/rtx 2070m\b/, 8], [/rtx 2060m\b/, 6],
+  [/rtx 2080 mobile\b/, 8], [/rtx 2070 mobile\b/, 8],
+  [/rtx 2060 mobile\b/, 6], [/rtx 2050 mobile\b/, 4],
+  // RTX 20 系列桌上型
+  [/rtx 2080 ti\b/, 11], [/rtx 2080 super\b/, 8], [/rtx 2080\b/, 8],
+  [/rtx 2070 super\b/, 8], [/rtx 2070\b/, 8],
+  [/rtx 2060 super\b/, 8], [/rtx 2060\b/, 6],
+  [/rtx 2050\b/, 4],
+
+  // ════════════════════════════════════════════════════════════════
+  // NVIDIA GeForce GTX 16 / 10 系列
+  // ════════════════════════════════════════════════════════════════
+  [/gtx 1660 ti\b/, 6], [/gtx 1660 super\b/, 6], [/gtx 1660\b/, 6],
+  [/gtx 1650 super\b/, 4], [/gtx 1650\b/, 4],
+  [/gtx 1630\b/, 4],
+  [/gtx 1080 ti\b/, 11], [/gtx 1080\b/, 8],
+  [/gtx 1070 ti\b/, 8], [/gtx 1070\b/, 8],
+  [/gtx 1060\s*6g\b/, 6], [/gtx 1060\s*5g\b/, 5], [/gtx 1060\s*3g\b/, 3], [/gtx 1060\b/, 6],
+  [/gtx 1050 ti\b/, 4], [/gtx 1050\b/, 3],
+  [/gtx 1030\b/, 2],
+  [/gtx 980 ti\b/, 6], [/gtx 980\b/, 4],
+  [/gtx 970\b/, 4], [/gtx 960\b/, 2],
+  [/gtx 950\b/, 2],
+  [/gtx 880m\b/, 4], [/gtx 870m\b/, 3], [/gtx 860m\b/, 2],
+  [/gtx 780m\b/, 4], [/gtx 770m\b/, 3], [/gtx 765m\b/, 2],
+
+  // === NVIDIA Titan ===
+  [/titan rtx\b/, 24], [/titan v\b/, 12], [/titan xp\b/, 12], [/titan x\b/, 12],
+
+  // === NVIDIA 專業卡 / 資料中心 ===
+  [/h100\b/, 80], [/h200\b/, 141],
+  [/b100\b/, 80],
+  [/a100\s*80/, 80], [/a100\b/, 40],
+  [/a6000\b/, 48], [/a5000\b/, 24], [/a4500\b/, 20], [/a4000\b/, 16],
+  [/rtx a6000\b/, 48], [/rtx a5000\b/, 24],
+  [/quadro rtx 8000\b/, 48], [/quadro rtx 6000\b/, 24], [/quadro rtx 5000\b/, 16],
+  [/quadro p?[0-9]{4}\b/, 8],
+  [/nvidia rtx [0-9]{4,5} laptop\b/, 4], // 筆電 RTX 專業卡保守估
+
+  // ════════════════════════════════════════════════════════════════
+  // AMD Radeon RX 7000 系列（筆電優先）
+  // ════════════════════════════════════════════════════════════════
+  [/7900m\b/, 16], [/7800m\b/, 12],
+  [/7600m xt\b/, 8], [/7600m\b/, 8],
+  [/7700s\b/, 8], [/7600s\b/, 6],
+  // AMD Radeon RX 7000 系列桌上型
+  [/7900 xtx\b/, 24], [/7900 xt\b/, 20], [/7900 gre\b/, 16],
+  [/7800 xt\b/, 16], [/7700 xt\b/, 12], [/7600 xt\b/, 8], [/7600\b/, 8],
+  [/7500\b/, 6],
+
+  // ════════════════════════════════════════════════════════════════
+  // AMD Radeon RX 6000 系列（筆電優先）
+  // ════════════════════════════════════════════════════════════════
+  [/6800m\b/, 12], [/6700m\b/, 10], [/6600m\b/, 8],
+  // AMD Radeon RX 6000 系列桌上型
+  [/6950 xt\b/, 16], [/6900 xt\b/, 16], [/6800 xt\b/, 16], [/6800\b/, 16],
+  [/6750 xt\b/, 12], [/6700 xt\b/, 12], [/6700\b/, 10],
+  [/6650 xt\b/, 8], [/6600 xt\b/, 8], [/6600\b/, 8],
+  [/6500 xt\b/, 4], [/6400\b/, 4],
+
+  // === AMD Radeon RX 5000 系列 ===
+  [/5700 xt\b/, 8], [/5700\b/, 8], [/5600 xt\b/, 6], [/5500 xt\b/, 4],
+
+  // === AMD Radeon VII / Vega / 500M 系列 ===
+  [/radeon vii\b/, 16], [/vega 64\b/, 8], [/vega 56\b/, 8],
+  [/vega 20\b/, 4], [/vega 11\b/, 2], [/vega 8\b/, 2],
+  [/5500m\b/, 4], [/5300m\b/, 4],
+
+  // === Intel Arc ===
+  [/arc a770\s*16/, 16], [/arc a770\b/, 16], [/arc a750\b/, 8], [/arc a580\b/, 8],
+  [/arc a380\b/, 6], [/arc a310\b/, 4],
+
+  // === Intel Iris / UHD（內顯）===
+  [/iris xe\b/, 2], [/iris plus\b/, 2], [/uhd [0-9]{3}\b/, 2], [/hd graphics\b/, 1],
+
+  // === Apple Silicon（依晶片+核心數推測）===
+  [/m4\s*max\b/, 48], [/m4\s*pro\s*24/, 24], [/m4\s*pro/, 16], [/m4\b/, 16],
+  [/m3\s*max\s*128/, 128], [/m3\s*max\s*96/, 96], [/m3\s*max\s*64/, 64], [/m3\s*max\s*48/, 48], [/m3\s*max\b/, 48],
+  [/m3\s*pro\s*24/, 24], [/m3\s*pro\s*18/, 18], [/m3\s*pro\b/, 18],
+  [/m3\b/, 8],
+  [/m2\s*ultra\b/, 64], [/m2\s*max\s*96/, 96], [/m2\s*max\s*64/, 64], [/m2\s*max\s*48/, 48], [/m2\s*max\s*32/, 32], [/m2\s*max\b/, 32],
+  [/m2\s*pro\s*24/, 24], [/m2\s*pro\s*16/, 16], [/m2\s*pro\b/, 16],
+  [/m2\b/, 8],
+  [/m1\s*ultra\b/, 64], [/m1\s*max\s*64/, 64], [/m1\s*max\s*32/, 32], [/m1\s*max\b/, 32],
+  [/m1\s*pro\s*32/, 32], [/m1\s*pro\s*24/, 24], [/m1\s*pro\s*16/, 16], [/m1\s*pro\b/, 16],
+  [/m1\b/, 8],
+
+  // === Qualcomm Snapdragon / Adreno ===
+  [/adreno 7[0-9]{2}\b/, 4], [/adreno 6[0-9]{2}\b/, 2], [/adreno 5[0-9]{2}\b/, 1],
+  [/snapdragon\b/, 2],
+];
+
+function lookupVRAM(gpuStr) {
+  const s = gpuStr.toLowerCase().trim();
+  if (!s) return 0;
+  for (const [regex, vram] of GPU_VRAM_DB) {
+    if (regex.test(s)) return vram;
+  }
+  // 例外：包含顯存數字的直接提取（如 "RTX 3060 12GB"）
+  const memMatch = s.match(/(\d+)\s*g[bb]\b/);
+  if (memMatch) return parseInt(memMatch[1]);
+  // NVIDIA chip 但沒匹配到型號 → 嘗試從系列判斷
+  if (s.includes("nvidia") || s.includes("geforce")) {
+    if (s.includes("rtx")) return 8;
+    if (s.includes("gtx")) return 4;
+    return 4;
+  }
+  // AMD chip 但沒匹配到
+  if (s.includes("amd") || s.includes("radeon")) {
+    if (s.includes("rx")) return 4;
+    return 2;
+  }
+  // Intel 內顯
+  if (s.includes("intel")) return 1;
+  // Apple GPU（非特定型號）
+  if (s.includes("apple")) return 8;
+  return 0;
+}
+
+// ========================================================================
+// 硬體偵測（主入口）
+// ========================================================================
+function refreshSpecDisplay() {
+  document.getElementById("spec_os").textContent  = pc.os     || "—";
+  document.getElementById("spec_cpu").textContent = pc.cpu    || "—";
+  document.getElementById("spec_ram").textContent  = pc.ramGB  > 0 ? pc.ramGB  + " GB" : "—";
+  document.getElementById("spec_gpu").textContent  = pc.gpu    || "—";
+  document.getElementById("spec_vram").textContent = pc.vramGB > 0 ? pc.vramGB + " GB" : "—";
+  document.getElementById("spec_disk").textContent = pc.diskGB > 0 ? pc.diskGB + " GB" : "—";
+}
+
+function renderSensors(sensors) {
+  const panel = document.getElementById("sensorPanel");
+  const cont  = document.getElementById("sensorContent");
+  if (!sensors || sensors.length === 0) { panel.style.display = "none"; return; }
+  panel.style.display = "block";
+
+  let html = "";
+  for (let gi = 0; gi < sensors.length; gi++) {
+    const hw = sensors[gi];
+    if (!hw.sensors || hw.sensors.length === 0) continue;
+    const groupId = "sg-" + gi;
+    html += `<div class="sensor-group">`;
+    html += `<div class="sensor-header" onclick="toggleSensorGroup('${groupId}')">`;
+    html += `<span class="arrow">▶</span>`;
+    html += `${hw.icon || "🔧"} ${hw.hardware} <span style="font-size:0.75rem;color:var(--text2);font-weight:400;">(${hw.type})</span>`;
+    html += `<span class="sensor-count">${hw.sensors.length} 個感測器</span>`;
+    html += `</div>`;
+    html += `<div id="${groupId}" class="sensor-grid collapsed">`;
+    for (const s of hw.sensors) {
+      let unit = "", cls = "s-value";
+      switch (s.type) {
+        case "Temperature": unit = "°C"; break;
+        case "Load":        unit = "%";  break;
+        case "Clock":       unit = " MHz"; break;
+        case "Fan":         unit = " RPM"; break;
+        case "Power":       unit = " W"; break;
+        case "Voltage":     unit = " V"; break;
+        case "Data":        unit = " GB"; break;
+        case "SmallData":   unit = " MB"; break;
+        case "Flow":        unit = " L/h"; break;
+        case "Control":     unit = " %"; break;
+        case "Level":       unit = " %"; break;
+        case "Factor":      unit = " 1"; break;
+        case "Throughput":  unit = " B/s"; break;
+        case "Frequency":   unit = " Hz"; break;
+      }
+      // Color coding
+      if (s.type === "Temperature") {
+        if (s.value >= 80) cls += " temp-hot";
+        else if (s.value >= 60) cls += " temp-warm";
+        else cls += " temp-ok";
+      } else if (s.type === "Load" || s.type === "Control" || s.type === "Level") {
+        if (s.value >= 80) cls += " load-high";
+        else if (s.value >= 50) cls += " load-med";
+        else cls += " load-low";
+      }
+      html += `<div class="sensor-item"><span class="s-label">${s.name}</span><span class="${cls}">${s.value}<span class="s-unit">${unit}</span></span></div>`;
+    }
+    html += "</div></div>";
+  }
+  cont.innerHTML = html;
+}
+
+// Toggle sensor group collapse/expand
+function toggleSensorGroup(id) {
+  const grid = document.getElementById(id);
+  if (!grid) return;
+  grid.classList.toggle("collapsed");
+  const header = grid.previousElementSibling;
+  if (header) {
+    const arrow = header.querySelector(".arrow");
+    if (arrow) arrow.classList.toggle("open");
+  }
+}
+
+function detectHardware() {
+  // 若系統級設定已載入，保留系統資料，直接刷新 UI
+  if (typeof pc !== 'undefined' && pc.systemConfigLoaded) {
+    refreshSpecDisplay();
+    return;
+  }
+  pc.systemConfigLoaded = false; // 允許瀏覽器偵測覆蓋
+  document.getElementById("spec_os").textContent = "偵測中...";
+  const ua = navigator.userAgent;
+  let os = "未知";
+  if (ua.includes("Windows NT 10")) os = "Windows 10/11";
+  else if (ua.includes("Windows NT 6.3")) os = "Windows 8.1";
+  else if (ua.includes("Windows NT 6.1")) os = "Windows 7";
+  else if (ua.includes("Mac OS X")) { const m = ua.match(/Mac OS X (\d+[._]\d+)/); os = "macOS" + (m ? " " + m[1].replace("_",".") : ""); }
+  else if (ua.includes("Linux")) os = "Linux";
+  else if (ua.includes("Android")) os = "Android";
+  else if (ua.includes("iPhone") || ua.includes("iPad")) os = "iOS";
+  pc.os = os;
+  document.getElementById("spec_os").textContent = os;
+
+  const cores = navigator.hardwareConcurrency || "?";
+  pc.cpuCores = cores;
+  let cpuStr = cores + " 核心";
+  if (ua.includes("x64") || ua.includes("x86_64") || ua.includes("Win64")) { cpuStr += " (x86-64)"; pc.cpu = cores + " 核心"; }
+  else if (ua.includes("arm64") || ua.includes("ARM64") || ua.includes("aarch64")) { cpuStr += " (ARM64)"; pc.cpu = cores + " 核心 (ARM)"; }
+  else { pc.cpu = cores + " 核心"; }
+  document.getElementById("spec_cpu").textContent = cpuStr;
+
+  let ram = "未知";
+  if (navigator.deviceMemory) { ram = navigator.deviceMemory + " GB"; pc.ramGB = navigator.deviceMemory; }
+  else { ram = "⚠️ 瀏覽器不支援偵測（Chrome 可用）"; pc.ramGB = 0; }
+  document.getElementById("spec_ram").textContent = ram;
+
+  // GPU 偵測中
+  document.getElementById("spec_gpu").textContent = "🔄 偵測 GPU 中...";
+  document.getElementById("spec_vram").textContent = "🔄 偵測中...";
+
+  document.getElementById("spec_disk").textContent = "—";
+  if (navigator.storage && navigator.storage.estimate) {
+    navigator.storage.estimate().then(e => { const gb = Math.round(e.quota / (1024**3)); if (gb > 0) { pc.diskGB = gb; document.getElementById("spec_disk").textContent = gb + " GB 可用"; } }).catch(() => {});
+  }
+
+  detectGPU().then(gpuInfo => {
+    // 若系統級設定已載入，優先保留系統資料
+    if (typeof pc !== 'undefined' && pc.systemConfigLoaded) {
+      refreshSpecDisplay();
+      return;
+    }
+    if (gpuInfo && gpuInfo.name) {
+      // 瀏覽器偵測到的 GPU，交叉比對型號資料庫
+      const dbVram = lookupVRAM ? lookupVRAM(gpuInfo.name) : 0;
+      document.getElementById("spec_gpu").textContent = gpuInfo.name;
+      pc.gpu = gpuInfo.name;
+      if (gpuInfo.vram > 0) {
+        let finalVram = gpuInfo.vram;
+        let methodLabel = "";
+        if (gpuInfo.method === "NVIDIA_EXT") methodLabel = " 🔹 硬體偵測";
+        else if (gpuInfo.method === "ALLOC_TEST") methodLabel = " 🔸 實測估算";
+        else if (gpuInfo.method === "WEBGPU") methodLabel = " 🔹 WebGPU";
+        else if (gpuInfo.method === "LOOKUP") methodLabel = "";
+        else if (gpuInfo.method === "NAME_ONLY") methodLabel = " ⚠️ 名稱推測";
+        // 若型號資料庫有值且合理，採用資料庫值（WebGL 實測常不準）
+        if (dbVram > finalVram && dbVram <= 128) {
+          finalVram = dbVram;
+          methodLabel = " 🔹 型號校驗";
+        }
+        document.getElementById("spec_vram").textContent = finalVram + " GB" + methodLabel;
+        pc.vramGB = finalVram;
+      } else {
+        document.getElementById("spec_vram").textContent = "⚠️ 無法自動判斷，請手動選擇";
+      }
+    } else {
+      document.getElementById("spec_gpu").textContent = "⚠️ 未能自動偵測";
+      document.getElementById("spec_vram").textContent = "⚠️ 請手動選擇";
+    }
+  }).finally(() => {
+    setTimeout(() => document.getElementById("manualGpu").classList.add("visible"), 800);
+  });
+}
+
+// ========================================================================
+// 方法：透過 WebGL 分配測試估算 VRAM（實際偵測）
+// ========================================================================
+function detectVRAMByAllocation(gl) {
+  try {
+    const maxTexSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    // 從 1MB 開始逐步加大，直到分配失敗
+    let step = 1024; // 起始 1024x1024 ≈ 4MB
+    let maxSuccess = 0;
+    let maxStep = 0;
+    const tested = [];
+
+    while (step <= maxTexSize) {
+      let allocated = false;
+      // 嘗試分配 RGBA8 texture
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, step, step, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      const err = gl.getError();
+      if (err === 0) {
+        allocated = true;
+        const sizeMB = (step * step * 4) / (1024 * 1024);
+        maxSuccess = Math.max(maxSuccess, sizeMB);
+        maxStep = step;
+        tested.push({ step, sizeMB });
+      }
+      gl.deleteTexture(tex);
+      if (!allocated) break;
+      // 逐步增加，接近上限時改用更細的步長
+      if (step < 2048) step = Math.min(Math.floor(step * 2), maxTexSize);
+      else if (step < 8192) step = Math.min(Math.floor(step * 1.3), maxTexSize);
+      else step = Math.min(Math.floor(step * 1.15), maxTexSize);
+      if (step === tested[tested.length - 1]?.step) break;
+    }
+
+    // 驅動通常允許分配約 25-33% 的 VRAM 給單一 texture
+    // 保守取 3 倍 = 約可分配 33% → 推估總 VRAM
+    if (maxSuccess > 100) {
+      let estGB = Math.round(maxSuccess * 3 / 1024);
+      // 校正到常用 VRAM 值
+      const commonVRAM = [4, 6, 8, 10, 12, 16, 20, 24, 32, 48, 64];
+      for (const c of commonVRAM) {
+        const diff = Math.abs(estGB - c);
+        if (diff <= 2) { estGB = c; break; }
+      }
+      return estGB;
+    }
+    if (maxSuccess > 0) return Math.round(maxSuccess * 4 / 1024);
+    return 0;
+  } catch(e) { return 0; }
+}
+
+// ========================================================================
+// 方法：NVIDIA WebGL 擴展直接讀取 VRAM
+// ========================================================================
+function detectVRAMNvidiaExt(gl) {
+  try {
+    const ext = gl.getExtension("GL_GPU_MEM_INFO_TOTAL_AVAILABLE_MEMORY_NVIDIA");
+    if (ext) {
+      const totalMemKb = gl.getParameter(ext.GPU_MEM_INFO_TOTAL_AVAILABLE_MEMORY_NVIDIA);
+      if (totalMemKb && totalMemKb > 0) {
+        return Math.round(totalMemKb / (1024 * 1024)); // KB → GB
+      }
+    }
+  } catch(e) {}
+  return 0;
+}
+
+// ========================================================================
+// 正規化 WebGL GPU 名稱（去除 ANGLE/Direct3D 噪音）
+// ========================================================================
+function normalizeWebGLGpuName(raw) {
+  let s = raw.replace(/Google Inc\.\s*/gi, "").trim();
+  // Chrome: "ANGLE (NVIDIA, NVIDIA GeForce RTX 4090 Laptop GPU Direct3D11...)"
+  // Firefox: "NVIDIA GeForce RTX 4090 Laptop GPU -- ..."
+  const angle = s.match(/ANGLE\s*\([^,]+,\s*([^)]+)/i);
+  if (angle) s = angle[1];
+  s = s.replace(/Direct3D\s*\S*\s*.*$/i, "").replace(/Vulkan\s*\(.*$/i, "").replace(/--\s*.*$/, "").replace(/OpenGL.*$/i, "");
+  return s.replace(/\s+/g, " ").trim();
+}
+
+// ========================================================================
+// 多層次 GPU 偵測（WebGL → WebGPU → UA）
+// ========================================================================
+async function detectGPU() {
+  let gpuName = "";
+  let vramFromName = 0;
+
+  // ---- 第一步：取得 GPU 型號 ----
+  try {
+    const canvas = document.createElement("canvas");
+    const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+    if (gl) {
+      // 先嘗試 NVIDIA 擴展直接讀 VRAM（最準確）
+      const nvVRAM = detectVRAMNvidiaExt(gl);
+      if (nvVRAM > 0) {
+        // 仍要讀取 GPU 名稱
+        const ext = gl.getExtension("WEBGL_debug_renderer_info");
+        if (ext) {
+          const r = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);
+          gpuName = normalizeWebGLGpuName(r);
+        } else {
+          gpuName = gl.getParameter(gl.RENDERER) + " " + gl.getParameter(gl.VENDOR);
+        }
+        return { name: gpuName, vram: nvVRAM, method: "NVIDIA_EXT" };
+      }
+
+      // 讀取 GPU 名稱
+      const ext = gl.getExtension("WEBGL_debug_renderer_info");
+      if (ext) {
+        const r = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);
+        gpuName = normalizeWebGLGpuName(r);
+      }
+      if (!gpuName || gpuName.length < 3) {
+        gpuName = (gl.getParameter(gl.RENDERER) + " " + gl.getParameter(gl.VENDOR)).replace(/\s+/g, " ").trim();
+      }
+
+      // 從名稱推測 VRAM
+      vramFromName = lookupVRAM(gpuName);
+
+      // 如果名稱推測不到，嘗試實際分配測試
+      if (vramFromName === 0) {
+        const allocVRAM = detectVRAMByAllocation(gl);
+        if (allocVRAM > 0) {
+          return { name: gpuName || "Unknown GPU", vram: allocVRAM, method: "ALLOC_TEST" };
+        }
+      }
+    }
+  } catch(e) {}
+
+  // ---- 第二步：WebGPU API ----
+  try {
+    if (navigator.gpu) {
+      const adapter = await navigator.gpu.requestAdapter();
+      if (adapter) {
+        const info = adapter.info || {};
+        gpuName = info.description || info.device || info.vendor || "";
+        if (gpuName) {
+          vramFromName = lookupVRAM(gpuName);
+          // WebGPU 某些實作會暴露記憶體資訊
+          if (info.memory) {
+            return { name: gpuName.trim(), vram: Math.round(info.memory / (1024**3)), method: "WEBGPU" };
+          }
+          return { name: gpuName.trim(), vram: vramFromName, method: vramFromName > 0 ? "LOOKUP" : "NAME_ONLY" };
+        }
+      }
+    }
+  } catch(e) {}
+
+  // ---- 第三步：User-Agent 解析（主要 Apple Silicon）----
+  try {
+    const ua = navigator.userAgent;
+    if (ua.includes("Mac ARM") || ua.includes("Apple M")) {
+      const m = ua.match(/Apple\s*(M\d+)\s*(Pro|Max|Ultra)?\s*/i);
+      if (m) {
+        const name = "Apple " + (m[1] || "") + " " + (m[2] || "");
+        return { name: name.trim(), vram: lookupVRAM(name), method: "UA_PARSE" };
+      }
+    }
+  } catch(e) {}
+
+  // ---- 第四步：回傳名稱（如果有）但 VRAM=0 ----
+  if (gpuName) {
+
+  
+    return { name: gpuName, vram: vramFromName, method: vramFromName > 0 ? "LOOKUP" : "NAME_ONLY" };
+  }
+
+  return null;
+}
+
+// ========================================================================
+// 手動 GPU
+// ========================================================================
+function onGpuSelect() {
+  pc.systemConfigLoaded = false;
+  const val = document.getElementById("gpuSelect").value;
+  if (!val) return;
+  const parts = val.split("|");
+  document.getElementById("spec_gpu").textContent = parts[0];
+  document.getElementById("spec_vram").textContent = parts[1] + " GB";
+  pc.gpu = parts[0]; pc.vramGB = parseInt(parts[1]);
+}
+
+function applyManualGpu() {
+  pc.systemConfigLoaded = false;
+  const sel = document.getElementById("gpuSelect").value;
+  const manual = document.getElementById("vramManual").value;
+  if (sel) { const parts = sel.split("|"); document.getElementById("spec_gpu").textContent = parts[0]; document.getElementById("spec_vram").textContent = parts[1] + " GB"; pc.gpu = parts[0]; pc.vramGB = parseInt(parts[1]); }
+  else if (manual) { const v = parseInt(manual); if (v > 0) { document.getElementById("spec_vram").textContent = v + " GB"; pc.vramGB = v; if (!pc.gpu) { pc.gpu = "手動設置"; document.getElementById("spec_gpu").textContent = "手動設置"; } } }
+  document.getElementById("manualGpu").classList.remove("visible");
+}
+
+// ========================================================================
+// 快速重新偵測 GPU（只偵測 GPU，不影響其他設定）
+// ========================================================================
+function quickDetectGPU() {
+  document.getElementById("spec_gpu").textContent = "🔄 偵測 GPU 中...";
+  document.getElementById("spec_vram").textContent = "🔄 偵測中...";
+  detectGPU().then(gpuInfo => {
+    // 若系統級設定已載入，優先保留系統資料
+    if (typeof pc !== 'undefined' && pc.systemConfigLoaded) {
+      refreshSpecDisplay();
+      return;
+    }
+    if (gpuInfo && gpuInfo.name) {
+      // 瀏覽器偵測到的 GPU，交叉比對型號資料庫
+      const dbVram = lookupVRAM ? lookupVRAM(gpuInfo.name) : 0;
+      document.getElementById("spec_gpu").textContent = gpuInfo.name;
+      pc.gpu = gpuInfo.name;
+      if (gpuInfo.vram > 0) {
+        let finalVram = gpuInfo.vram;
+        let methodLabel = "";
+        if (gpuInfo.method === "NVIDIA_EXT") methodLabel = " 🔹 硬體偵測";
+        else if (gpuInfo.method === "ALLOC_TEST") methodLabel = " 🔸 實測估算";
+        else if (gpuInfo.method === "WEBGPU") methodLabel = " 🔹 WebGPU";
+        else if (gpuInfo.method === "LOOKUP") methodLabel = "";
+        else if (gpuInfo.method === "NAME_ONLY") methodLabel = " ⚠️ 名稱推測";
+        // 若型號資料庫有值且合理，採用資料庫值（WebGL 實測常不準）
+        if (dbVram > finalVram && dbVram <= 128) {
+          finalVram = dbVram;
+          methodLabel = " 🔹 型號校驗";
+        }
+        document.getElementById("spec_vram").textContent = finalVram + " GB" + methodLabel;
+        pc.vramGB = finalVram;
+      } else {
+        document.getElementById("spec_vram").textContent = "⚠️ 無法自動判斷，請手動選擇";
+      }
+    } else {
+      document.getElementById("spec_gpu").textContent = "⚠️ 未能自動偵測";
+      document.getElementById("spec_vram").textContent = "⚠️ 請手動選擇";
+    }
+  }).finally(() => {
+    setTimeout(() => document.getElementById("manualGpu").classList.add("visible"), 500);
+  });
+}
+
+// ========================================================================
+// 演示配置
+// ========================================================================
+function fillDemoConfig() {
+  pc.systemConfigLoaded = false;
+  pc.os = "Windows 11"; pc.cpu = "16 核心"; pc.cpuCores = 16; pc.ramGB = 32; pc.gpu = "NVIDIA RTX 4090"; pc.vramGB = 24; pc.diskGB = 500;
+  document.getElementById("spec_os").textContent = "Windows 11";
+  document.getElementById("spec_cpu").textContent = "16 核心 (x86-64)";
+  document.getElementById("spec_ram").textContent = "32 GB";
+  document.getElementById("spec_gpu").textContent = "NVIDIA RTX 4090";
+  document.getElementById("spec_vram").textContent = "24 GB";
+  document.getElementById("spec_disk").textContent = "500 GB+";
+  document.getElementById("manualGpu").classList.add("visible");
+}
+
+// ========================================================================
+// 系統級硬體偵測 — 線上即時偵測（彈窗引導 + 自動輪詢）
+// ========================================================================
+let detectPollTimer = null;
+let detectStartTime = 0;
+
+function updateDetectStep(id, status, msg) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const icon = el.querySelector(".step-icon");
+  if (status === "done") { el.className = "detect-step done"; if (icon) icon.textContent = "✅"; }
+  else if (status === "active") { el.className = "detect-step active"; if (icon) icon.textContent = "⏳"; }
+  else if (status === "fail") { el.className = "detect-step fail"; if (icon) icon.textContent = "❌"; }
+  else { el.className = "detect-step"; if (icon) icon.textContent = "⏳"; }
+  if (msg) {
+    const textNode = el.childNodes[el.childNodes.length - 1];
+    if (textNode) textNode.textContent = " " + msg;
+  }
+}
+
+function showDetectModal(state) {
+  const overlay = document.getElementById("detectOverlay");
+  if (!overlay) return;
+  if (state === "show") {
+    overlay.classList.add("visible");
+    // Reset steps
+    ["step1","step2","step3","step4"].forEach(id => updateDetectStep(id, "", ""));
+    updateDetectStep("step1", "active", "啟動 PowerShell 偵測腳本...");
+  } else {
+    overlay.classList.remove("visible");
+  }
+}
+
+function closeDetectModal() {
+  if (detectPollTimer) { clearInterval(detectPollTimer); detectPollTimer = null; }
+  showDetectModal("hide");
+}
+
+function showDetectError(msg) {
+  const content = document.getElementById("detectModalContent");
+  if (!content) return;
+  content.innerHTML = `
+    <div style="font-size:3rem;margin-bottom:8px;">😅</div>
+    <h2>偵測需要你幫忙</h2>
+    <p style="font-size:0.85rem;color:var(--text2);">瀏覽器無法直接執行系統腳本。<br>請手動執行偵測，只需 3 秒：</p>
+    <div class="detect-steps" style="text-align:center;">
+      <div style="background:var(--surface2);border-radius:10px;padding:12px;margin:8px 0;">
+        <div style="font-size:1.2rem;font-weight:600;">📁 雙擊執行</div>
+        <code style="display:block;background:var(--bg);padding:8px 12px;border-radius:6px;margin:8px 0;font-size:0.85rem;">run-detection.bat</code>
+        <div style="font-size:0.8rem;color:var(--text2);">或在終端機執行：</div>
+        <code style="display:block;background:var(--bg);padding:8px 12px;border-radius:6px;margin:8px 0;font-size:0.75rem;">powershell -File detect-hardware.ps1</code>
+      </div>
+    </div>
+    <p style="font-size:0.8rem;color:var(--green);">🔄 偵測完成後會自動載入結果...</p>
+    <div style="margin-top:12px;display:flex;flex-wrap:wrap;justify-content:center;gap:8px;">
+      <button class="detect-retry-btn" onclick="retryDetect()">🔄 重新偵測</button>
+      <button class="detect-browser-btn" onclick="fallbackBrowserDetect()">🌐 改為瀏覽器偵測（較不準）</button>
+      <button class="detect-close-btn" onclick="closeDetectModal()">✕ 關閉</button>
+    </div>
+    ${msg ? `<p style="margin-top:8px;font-size:0.78rem;color:var(--red);">${msg}</p>` : ""}
+  `;
+  // Start polling for JSON
+  startDetectPolling();
+}
+
+function startDetectPolling() {
+  if (detectPollTimer) clearInterval(detectPollTimer);
+  let lastContent = "";
+  
+  // Read current content first (try fetch, fall back to script)
+  const doPoll = async () => {
+    try {
+      // Try fetch first
+      let data = null;
+      try {
+        const resp = await fetch("hardware-config.json?_t=" + Date.now());
+        if (resp.ok) data = await resp.json();
+      } catch(e) {}
+      
+      // Fallback: script tag
+      if (!data) {
+        try { data = await loadJSONViaScript(); } catch(e) {}
+      }
+      
+      if (data && !data.error && data.vram_gb > 0) {
+        const content = JSON.stringify(data);
+        if (content !== lastContent) {
+          lastContent = content;
+          clearInterval(detectPollTimer);
+          detectPollTimer = null;
+          applySystemConfig(data);
+          closeDetectModal();
+          return true;
+        }
+      }
+    } catch(e) {}
+    return false;
+  };
+  
+  // Start periodic polling
+  detectPollTimer = setInterval(doPoll, 1500);
+  // Also run immediately
+  doPoll();
+}
+
+function fallbackBrowserDetect() {
+  if (detectPollTimer) { clearInterval(detectPollTimer); detectPollTimer = null; }
+  closeDetectModal();
+  // 執行瀏覽器偵測並顯示 banner
+  detectHardware();
+  document.getElementById("sysDetectBanner").style.display = "block";
+  document.getElementById("sysDetectBanner").innerHTML = "🌐 使用瀏覽器偵測（數據有限）。若要更精準請雙擊 <code>run-detection.bat</code>";
+}
+
+function retryDetect() {
+  if (detectPollTimer) { clearInterval(detectPollTimer); detectPollTimer = null; }
+  loadSystemConfig(); // 重新開始
+}
+
+async function loadSystemConfig() {
+  // 從雲端（HTTP/HTTPS）執行時，無法直指本機 PS1 路徑，改為引導下載
+  if (window.location.protocol !== 'file:') {
+    showDetectModal("show");
+    const content = document.getElementById("detectModalContent");
+    if (content) {
+      content.innerHTML = `
+        <div style="font-size:3rem;margin-bottom:8px;">📥</div>
+        <h2>需要在本機執行偵測</h2>
+        <p style="font-size:0.85rem;color:var(--text2);">從雲端網頁無法直接啟動本機 PowerShell。<br>請下載 <strong>一個檔案</strong> 到本機執行：</p>
+        <div class="detect-steps" style="text-align:center;">
+          <div style="background:var(--surface2);border-radius:10px;padding:12px;margin:8px 0;">
+            <div style="font-size:1.2rem;font-weight:600;">📁 雙擊執行</div>
+            <code style="display:block;background:var(--bg);padding:8px 12px;border-radius:6px;margin:8px 0;font-size:0.85rem;">run-detection.bat</code>
+            <div style="font-size:0.8rem;color:var(--text2);">內建偵測腳本，無需網路連線</div>
+          </div>
+          <div style="margin-top:8px;font-size:0.82rem;">
+            📥 <a href="run-detection.bat" download style="color:#7c5cfc;">下載 run-detection.bat</a>
+            🎯 一個檔案搞定，內建偵測腳本
+          </div>
+        </div>
+        <p style="font-size:0.8rem;color:var(--green);">⏳ 執行後重新整理此頁面即可載入結果</p>
+        <div style="margin-top:12px;display:flex;flex-wrap:wrap;justify-content:center;gap:8px;">
+          <button class="detect-close-btn" onclick="closeDetectModal()">✕ 關閉</button>
+        </div>
+      `;
+    }
+    return;
+  }
+  let checkData = null;
+  
+  // Try fetch
+  try {
+    const checkResp = await fetch("hardware-config.json?_t=" + Date.now());
+    if (checkResp.ok) checkData = await checkResp.json();
+  } catch(e) {}
+  
+  // Fallback: script tag
+  if (!checkData) {
+    try { checkData = await loadJSONViaScript(); } catch(e) {}
+  }
+  
+  if (checkData && !checkData.error && checkData.vram_gb > 0) {
+    // 檢查時間是否在 30 秒內
+    const now = new Date();
+    const detected = new Date(checkData.detected_at?.replace(" ", "T") || 0);
+    const ageSec = (now - detected) / 1000;
+    if (ageSec < 30) {
+      // 已經很新，直接套用
+      applySystemConfig(checkData);
+      document.getElementById("sysDetectBanner").style.display = "block";
+      document.getElementById("sysDetectBanner").innerHTML = "✅ 已載入最新的系統偵測結果（" + Math.round(ageSec) + " 秒前）";
+      return;
+    }
+  }
+  showDetectModal("show");
+  
+  // 嘗試方法 1: mshta ActiveX（Windows 專用）
+  let mshtaLaunched = false;
+  const ps1Path = window.location.href.substring(0, window.location.href.lastIndexOf("/") + 1) + "detect-hardware.ps1";
+  const ps1PathEscaped = ps1Path.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  
+  try {
+    // mshta 方式：用 ActiveX 執行 PowerShell（靜默模式）
+    const mshtaJs = "mshta:javascript:try{new ActiveXObject('Shell.Application').ShellExecute('powershell.exe','-NoProfile -ExecutionPolicy Bypass -File \\\"" + ps1PathEscaped + "\\\"','','open',0);}catch(e){};close();";
+    const mshtaWin = window.open(mshtaJs, "_blank", "width=1,height=1");
+    if (mshtaWin) {
+      setTimeout(() => { try { mshtaWin.close(); } catch(e) {} }, 100);
+      mshtaLaunched = true;
+    }
+  } catch(e) {}
+  
+  if (mshtaLaunched) {
+    updateDetectStep("step1", "done", "PowerShell 已啟動");
+    updateDetectStep("step2", "active", "等待偵測結果...");
+    // 開始輪詢 JSON
+    startDetectPolling();
+  } else {
+    // 方法 2: 直接嘗試打開 bat 檔案
+    updateDetectStep("step1", "fail", "無法自動啟動，請手動執行");
+    try {
+      const batPath = window.location.href.substring(0, window.location.href.lastIndexOf("/") + 1) + "run-detection.bat";
+      window.open(batPath, "_blank");
+    } catch(e) {}
+    showDetectError("自動啟動失敗，請手動執行 run-detection.bat");
+  }
+}
+
+// ── 工具函數：來源標籤與 Banner 訊息 ──
+function getSourceLabel(vramSource) {
+  if (vramSource === "nvidia-smi") return "nvidia-smi";
+  if (vramSource === "librehardware") return "LibreHardwareMonitor";
+  return "PowerShell WMI";
+}
+function buildBannerMsg(prefix, data) {
+  let msg = prefix + "（" + getSourceLabel(data.vram_source) + "）";
+  if (data.gpu_list && data.gpu_list.length > 1) {
+    const realGpus = data.gpu_list.filter(g => g.source === "nvidia-smi" || g.vram_gb >= 4);
+    msg += realGpus.length !== data.gpu_list.length
+      ? ` 偵測到 ${data.gpu_list.length} 個 GPU（${realGpus.length} 個有效）`
+      : ` 偵測到 ${data.gpu_list.length} 個 GPU`;
+  }
+  if (data.detected_at) msg += `<span class="json-modified-badge">${data.detected_at}</span>`;
+  return msg;
+}
+
+function applySystemConfig(data) {
+  if (!data || data.error) return;
+  
+  pc.systemConfigLoaded = true;
+  
+  document.getElementById("sysDetectBanner").style.display = "block";
+  document.getElementById("sysDetectBanner").innerHTML = buildBannerMsg("✅ 已載入線上硬體偵測結果（來自 ", data);
+  
+  // GPU
+  if (data.gpu) {
+    pc.gpu = data.gpu;
+    document.getElementById("spec_gpu").textContent = data.gpu;
+  }
+  
+  // VRAM
+  if (data.vram_gb > 0) {
+    const lv = typeof lookupVRAM === "function" ? lookupVRAM(data.gpu || "") : 0;
+    let fv = data.vram_gb, lb = " 🔹 系統偵測";
+    if (data.vram_source === "nvidia-smi") lb = " 🔹 nvidia-smi"; else if (data.vram_source === "librehardware") lb = " 🔹 LibreHardwareMonitor";
+    else if (data.vram_source === "wmi") lb = " 🔹 WMI";
+    if (lv > data.vram_gb && lv <= 128 && data.vram_source !== "nvidia-smi") { fv = lv; lb = " 🔹 系統+型號校驗"; }
+    pc.vramGB = fv;
+    document.getElementById("spec_vram").textContent = fv + " GB" + lb;
+  }
+  
+  // GPU 下拉自動選中（只選不覆寫 VRAM）
+  if (data.gpu && data.gpu_list && data.gpu_list.length > 0) {
+    const gpuSelect = document.getElementById("gpuSelect");
+    if (gpuSelect) {
+      const gpuNameLower = data.gpu.toLowerCase();
+      let bestOption = null;
+      let bestScore = 0;
+      for (const opt of gpuSelect.options) {
+        if (!opt.value) continue;
+        const optName = opt.value.split("|")[0].toLowerCase();
+        // 計分式匹配，避免筆電/桌機混淆
+        let score = 0;
+        if (optName === gpuNameLower) score = 100; // 完全匹配
+        else if (gpuNameLower.includes(optName) || optName.includes(gpuNameLower)) {
+          score = Math.max(gpuNameLower.includes(optName) ? optName.length : 0,
+                           optName.includes(gpuNameLower) ? gpuNameLower.length : 0);
+          // 加分：筆電型號匹配包含 laptop/mobile 字眼
+          if (optName.includes("laptop") && gpuNameLower.includes("laptop")) score += 10;
+          if (optName.includes("mobile") && gpuNameLower.includes("mobile")) score += 10;
+          // 扣分：筆電型號配到桌機
+          if (optName.includes("laptop") !== gpuNameLower.includes("laptop")) score -= 20;
+          if (optName.includes("mobile") !== gpuNameLower.includes("mobile")) score -= 20;
+        }
+        if (score > bestScore) { bestScore = score; bestOption = opt; }
+      }
+      if (bestOption && bestScore > 0) {
+        bestOption.selected = true;
+        // 不呼叫 onGpuSelect（避免覆寫系統 VRAM）
+      }
+    }
+  }
+  
+  // CPU
+  if (data.cpu) {
+    pc.cpu = data.cpu;
+    let s = data.cpu;
+    if (data.cpu_cores) {
+      s += " (" + data.cpu_cores + "核";
+      if (data.cpu_logical && data.cpu_logical !== data.cpu_cores) s += "/" + data.cpu_logical + "執行緒";
+      s += ")";
+    }
+    pc.cpuCores = data.cpu_logical || data.cpu_cores || 0;
+    document.getElementById("spec_cpu").textContent = s;
+  }
+  
+  // RAM
+  if (data.ram_gb > 0) {
+    pc.ramGB = data.ram_gb;
+    document.getElementById("spec_ram").textContent = data.ram_gb + " GB";
+  }
+  
+  // Disk
+  if (data.disk_gb > 0) {
+    pc.diskGB = data.disk_gb;
+    document.getElementById("spec_disk").textContent = data.disk_gb + " GB";
+  }
+  
+  // OS
+  if (data.os) {
+    pc.os = data.os;
+    document.getElementById("spec_os").textContent = data.os;
+  }
+  
+  // Sensors (LibreHardwareMonitor)
+  if (data.sensors) {
+    pc.sensors = data.sensors;
+    renderSensors(data.sensors);
+  }
+  
+  // 隱藏手動 GPU 區
+  document.getElementById("manualGpu").classList.remove("visible");
+}
+
+// ========================================================================
+// 自動讀取系統硬體設定檔（如果存在）
+// ========================================================================
+async function autoLoadSystemConfig() {
+  // 方法1: 嘗試 fetch（http server 或支援 file:// fetch 的瀏覽器）
+  try {
+    const resp = await fetch("hardware-config.json?_t=" + Date.now());
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data && data.vram_gb > 0 && !data.error) {
+        applySystemConfig(data);
+        document.getElementById("sysDetectBanner").innerHTML = buildBannerMsg("✅ 已自動載入線上硬體偵測結果（來自 ", data);
+        return true;
+      }
+    }
+  } catch(e) { /* fall through */ }
+  
+  // 方法2: script 標籤載入（file:// 相容）
+  try {
+    const data = await loadJSONViaScript();
+    if (data && !data.error && data.vram_gb > 0) {
+      applySystemConfig(data);
+      document.getElementById("sysDetectBanner").innerHTML = buildBannerMsg("✅ 已自動載入線上硬體偵測結果（來自 ", data);
+      return true;
+    }
+  } catch(e) { /* 沒有設定檔也沒關係 */ }
+  
+  return false;
+}
+
+// ── 用 <script> 標籤載入 JSON（支援 file://） ──
+function loadJSONViaScript() {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "hardware-config.js?_t=" + Date.now();
+    s.onload = () => {
+      const data = window._HARDWARE_CONFIG;
+      delete window._HARDWARE_CONFIG;
+      if (data) resolve(data);
+      else reject(new Error("No data"));
+    };
+    s.onerror = () => reject(new Error("Script load failed"));
+    // 如果 3 秒沒載入完成也 reject
+    const timeout = setTimeout(() => reject(new Error("Timeout")), 3000);
+    s.onload = () => { clearTimeout(timeout); const data = window._HARDWARE_CONFIG; delete window._HARDWARE_CONFIG; if (data) resolve(data); else reject(new Error("No data")); };
+    document.head.appendChild(s);
+  });
+}
+
+// ========================================================================
+// 快速選擇芯片
+// ========================================================================
+const MODEL_CHIPS = [
+  "LTX 2.3", "WAN 2.2", "FLUX.1", "SD 3.5",
+  "Stable Diffusion XL", "Qwen 2.5 7B", "Qwen 2.5 32B",
+  "DeepSeek R1", "Llama 3 8B", "CogVideoX", "Kolors",
+  "IC-Light", "CLIP Interrogator", "Whisper Large v3", "Phi-4 14B",
+  // 🏪 AI夢幻工廠熱銷
+  "HeyGem", "SoulX-Singer", "Matanyone", "AI短視頻引擎", "AI短片工廠",
+  "Codex+DeepSeek",
+  "RunningHub", "Qwen3.6-Plus", "Stable Audio 3", "RVC",
+  "DiffRhythm", "FireRed-Image-Edit", "LongCat-Image-Turbo",
+  "IMAGDressing", "Anydoor", "One To All-Animation", "AI碼賽克去除工具",
+  "Flux.2-Klein-9B-EA", "Klein_Edit", "DarkBeast-FaceSwap", "Pony Diffusion X",
+  "Qwen-Image-Edit-AIO", "DreamOmni2",
+  "AI換臉工具三合一", "FacePoke", "IDM-VTON",
+  "Wan2.2_SmoothMixV20", "Audiocraft", "MMAudio",
+  "Roop Unleashed", "StableAvatar", "F5-TTS", "Ming-omni-tts", "Woosh",
+  "ProPainter", "Bernini-v1", "Omni Voice",
+  "Ideogram 4", "FASHN VTON", "ERNIE-Image-Turbo",
+  "MatAnyone2", "GLM-Image", "Kandinsky 5",
+  // 🆕 本次分類補完
+  "VisoMaster", "Deep-Live-Cam Pro", "FaceFusion",
+  "GPT-SoVITS V4", "MOSS-TTS", "Hallo V2", "LivePortrait V3", "LTX 2.3 AIO", "SCAIL 2-GGUF",
+  "Wan2.2-Remix V3", "混元視頻工具V1.3", "SVI 2.0Pro", "Framepack", "Wan-Animate neo",
+  "DramaBox", "AI自動短劇解說", "Lens-Turbo", "Edge-TTS", "VideoLingo+IndexTTS", "VibeVoice 2026", "ShortDrama", "Fun-CineForge", "LTX2.3-EditAnything", "F5-TTS", "HunyuanVideo-Foley", "MimicMotion", "VideoCaptioner", "Fun_ASR", "Nvidia-vfx", "FlashVSR_Ultra_Fast", "AniPortrait", "FoleyCrafter", "Flux-Qwen 雙劍合璧",
+  "ACE-Step音樂生成", "ACE-Step+HearMuLa", "PilotTTS", "indexTTS V2",
+  "Sora2去浮水印", "照片說話唱歌APP", "安卓AI換臉神器", "AI影片消除萬物", "MiniMax-Remover", "Infinite Talk", "OpenCode",
+  "CineTTS-Studio",
+];
+const CHIP_COLLAPSE_LIMIT = 24;
+let chipsExpanded = false;
+let activeCategory = "全部";
+
+// ── 分類定義與顏色 ──
+const CATEGORIES = {
+  "全部":  { icon: "📋", color: "" },
+  "video": { icon: "🎬", label: "視頻生成" },
+  "image": { icon: "🖼️", label: "圖像生成" },
+  "llm":   { icon: "🧠", label: "大語言模型" },
+  "audio": { icon: "🎵", label: "音頻/語音" },
+  "edit":  { icon: "✂️", label: "圖像編輯/工具" },
+};
+
+// ── 建立分類篩選按鈕 ──
+function buildCategoryFilters() {
+  const container = document.getElementById("categoryFilters");
+  container.innerHTML = "";
+  // 從 MODELS 提取實際存在的分類
+  const usedCats = new Set(["全部"]);
+  for (const key of Object.keys(MODELS)) {
+    const cat = MODELS[key].cat;
+    if (cat && CATEGORIES[cat]) usedCats.add(cat);
+  }
+  // 按定義順序顯示
+  const order = ["全部", "video", "image", "llm", "audio", "edit"];
+  for (const c of order) {
+    if (!usedCats.has(c)) continue;
+    const def = CATEGORIES[c];
+    const label = def.label || c;
+    const btn = document.createElement("button");
+    btn.className = "chip" + (c === "全部" ? " active" : "");
+    btn.textContent = `${def.icon || "📋"} ${label}`;
+    btn.dataset.cat = c;
+    btn.onclick = () => {
+      document.querySelectorAll("#categoryFilters .chip").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      activeCategory = c;
+      filterModels();
+    };
+    container.appendChild(btn);
+  }
+}
+buildCategoryFilters();
+
+// ── 建立搜尋自動補全資料列表 ──
+function buildModelDatalist() {
+  const datalist = document.getElementById("modelList");
+  if (!datalist) return;
+  datalist.innerHTML = "";
+  const seen = new Set();
+  // 加入 MODELS 中的所有模型名
+  for (const key of Object.keys(MODELS)) {
+    if (!seen.has(key)) {
+      const opt = document.createElement("option");
+      opt.value = key;
+      datalist.appendChild(opt);
+      seen.add(key);
+    }
+  }
+  // 也加入 MODEL_CHIPS 中不重複的
+  for (const name of MODEL_CHIPS) {
+    if (!seen.has(name)) {
+      const opt = document.createElement("option");
+      opt.value = name;
+      datalist.appendChild(opt);
+      seen.add(name);
+    }
+  }
+}
+buildModelDatalist();
+
+function buildChips() {
+  const c = document.getElementById("modelChips");
+  c.innerHTML = "";
+  MODEL_CHIPS.forEach((n, i) => {
+    const ch = document.createElement("span");
+    ch.className = "chip";
+    ch.textContent = n;
+    ch.dataset.index = i;
+    if (i >= CHIP_COLLAPSE_LIMIT) ch.classList.add("chip-hidden");
+    ch.onclick = () => { document.getElementById("modelSearch").value = n; analyzeModel(n); };
+    c.appendChild(ch);
+  });
+  updateChipToggleText();
+}
+buildChips();
+
+function toggleChips() {
+  chipsExpanded = !chipsExpanded;
+  const q = document.getElementById("modelSearch").value.trim().toLowerCase();
+  document.querySelectorAll("#modelChips .chip").forEach(ch => {
+    if (q && !ch.textContent.toLowerCase().includes(q)) return;
+    const idx = parseInt(ch.dataset.index);
+    if (chipsExpanded) {
+      ch.classList.remove("chip-hidden");
+    } else {
+      if (idx >= CHIP_COLLAPSE_LIMIT) ch.classList.add("chip-hidden");
+    }
+  });
+  updateChipToggleText();
+}
+
+function updateChipToggleText() {
+  const btn = document.getElementById("chipToggleBtn");
+  if (!btn) return;
+  btn.textContent = chipsExpanded ? "📌 收合全部" : `📌 展開全部 (${MODEL_CHIPS.length}個)`;
+}
+
+function filterModels() {
+  const q = document.getElementById("modelSearch").value.trim().toLowerCase();
+  document.querySelectorAll("#modelChips .chip").forEach(ch => {
+    const name = ch.textContent.trim();
+    // 分類過濾
+    const catMatch = activeCategory === "全部" || (MODELS[name] && MODELS[name].cat === activeCategory);
+    // 文字搜尋
+    const textMatch = !q || name.toLowerCase().includes(q);
+    const match = catMatch && textMatch;
+    if (!match) {
+      ch.classList.add("chip-hidden");
+      return;
+    }
+    // show/hide based on collapse state
+    const idx = parseInt(ch.dataset.index);
+    if (chipsExpanded || idx < CHIP_COLLAPSE_LIMIT || q) {
+      ch.classList.remove("chip-hidden");
+    } else {
+      ch.classList.add("chip-hidden");
+    }
+  });
+}
+
+// ========================================================================
+// 核心分析函數
+// ========================================================================
+function analyzeModel(overrideName) {
+  const name = overrideName || document.getElementById("modelSearch").value.trim();
+  if (!name) {
+    document.getElementById("resultSection").classList.add("visible");
+    document.getElementById("resultContent").innerHTML = '<div style="text-align:center;padding:20px;color:var(--red);">⚠️ 請先輸入模型名稱</div>';
+    return;
+  }
+
+  let key = null;
+  if (MODELS[name]) key = name;
+  else {
+    const lower = name.toLowerCase().replace(/[\s\-_]+/g, "");
+    for (const k of Object.keys(MODELS)) {
+      if (k.toLowerCase().replace(/[\s\-_]+/g, "") === lower) { key = k; break; }
+    }
+    if (!key) {
+      for (const k of Object.keys(MODELS)) {
+        if (k.toLowerCase().includes(lower) || lower.includes(k.toLowerCase())) { key = k; break; }
+      }
+    }
+  }
+
+  if (!key) {
+    document.getElementById("resultSection").classList.add("visible");
+    document.getElementById("resultContent").innerHTML = `
+      <div style="text-align:center;padding:20px;color:var(--red);">
+        ⚠️ 未找到模型「${name}」<br>
+        <span style="font-size:0.85rem;color:var(--text2);">試試從快速選擇中點擊，或輸入準確的模型名稱</span>
+      </div>`;
+    return;
+  }
+
+  const model = MODELS[key];
+  const hasHardware = pc.vramGB > 0 || pc.ramGB > 0;
+
+  let html = `<div class="model-detail"><strong>${key}</strong>
+    <span class="badge badge-${model.cat === 'llm' ? 'blue' : model.cat === 'video' ? 'purple' : model.cat === 'image' ? 'green' : model.cat === 'edit' ? 'orange' : model.cat === 'audio' ? 'green' : 'orange'}">${model.type}</span>
+    ${model.params && model.params !== "—" ? `<span style="color:var(--text2);">· 參數量 ${model.params}</span>` : ""}
+  </div>`;
+
+  if (model.cloud) {
+    html += `<div class="verdict pass">🎉 <strong>${key}</strong> 是雲端服務，無需本地 GPU！
+      <div style="margin-top:8px;font-size:0.85rem;">${model.note}</div>
+    </div>`;
+    document.getElementById("resultSection").classList.add("visible");
+    document.getElementById("resultContent").innerHTML = html;
+    return;
+  }
+
+  if (!hasHardware) {
+    html += `<div class="verdict warn">⚠️ 尚未檢測硬體。請先點擊「檢測本機硬體」或手動選擇 GPU。</div>`;
+    html += `<div style="margin-top:12px;"><button class="btn btn-primary" onclick="detectHardware()">🔍 檢測硬體</button></div>`;
+    document.getElementById("resultSection").classList.add("visible");
+    document.getElementById("resultContent").innerHTML = html;
+    return;
+  }
+
+  // 對比分析
+  const items = [];
+  let passCount = 0, totalCount = 0;
+  function ci(label, cur, min, rec, unit) {
+    totalCount++;
+    const st = cur === 0 ? "unknown" : cur < min ? "fail" : cur < rec ? "warn" : "ok";
+    if (st === "ok") passCount++;
+    const icon = st === "ok" ? "✅" : st === "warn" ? "⚠️" : st === "fail" ? "❌" : "❓";
+    const tag = st === "ok" ? '<span class="tag tag-ok">滿足</span>'
+              : st === "warn" ? '<span class="tag tag-warn">最低可跑</span>'
+              : st === "fail" ? '<span class="tag tag-fail">不足</span>'
+              : '<span class="tag tag-warn">未檢測</span>';
+    items.push({ label, cur: cur > 0 ? cur + unit : "未檢測", need: `${min}-${rec}${unit}`, icon, tag });
+  }
+  ci("VRAM (顯存)", pc.vramGB, model.vram_min, model.vram_rec, " GB");
+  ci("RAM (記憶體)", pc.ramGB, model.ram_min, model.ram_rec, " GB");
+
+  html += `<table class="comparison-table">
+    <tr><th>項目</th><th>你的配置</th><th>模型需求</th><th>狀態</th></tr>`;
+  items.forEach(it => {
+    html += `<tr><td>${it.label}</td><td>${it.cur}</td><td>${it.need}</td><td>${it.icon} ${it.tag}</td></tr>`;
+  });
+  html += `</table>`;
+
+  html += `<div style="font-size:0.88rem;color:var(--text2);margin:4px 0 12px;">💿 模型檔案占用: <strong>~${model.disk} GB</strong></div>`;
+
+  const ratio = totalCount > 0 ? passCount / totalCount : 0;
+  if (ratio >= 1) {
+    html += `<div class="verdict pass">🎉 <strong>你的配置完全滿足 ${key} 的推薦需求！</strong>
+      <div style="margin-top:6px;font-size:0.85rem;">當前配置可以流暢運行此模型。</div>
+    </div>`;
+  } else if (ratio >= 0.5) {
+    html += `<div class="verdict warn">🌐 <strong>基礎可跑，但可能需要降低設置</strong>
+      <div style="margin-top:6px;font-size:0.85rem;">配置基本滿足最低需求。建議降低解析度/使用量化版/啟用 CPU offload。</div>
+    </div>`;
+  } else {
+    html += `<div class="verdict fail">❌ <strong>當前配置不足以運行 ${key}</strong>
+      <div style="margin-top:6px;font-size:0.85rem;">顯存或記憶體不足，需要升級硬體或使用雲端服務。</div>
+    </div>`;
+  }
+
+  // 📉 量化版本分析
+  (function() {
+    const paramsStr = model.params || "";
+    const paramMatch = paramsStr.match(/(\d+(?:\.\d+)?)\s*B/);
+    if (paramMatch && pc.vramGB > 0) {
+      const paramsB = parseFloat(paramMatch[1]);
+      // 各量化位元數與每參數位元組
+      const quants = [
+        { name: "FP16 (原始)", bits: 16, bytesPerParam: 2.0 },
+        { name: "Q8_0",       bits: 8,  bytesPerParam: 1.0 },
+        { name: "Q6_K",       bits: 6,  bytesPerParam: 0.75 },
+        { name: "Q5_K_M",     bits: 5,  bytesPerParam: 0.625 },
+        { name: "Q4_K_M",     bits: 4,  bytesPerParam: 0.5 },
+        { name: "Q3_K_M",     bits: 3,  bytesPerParam: 0.375 },
+        { name: "Q2_K",       bits: 2,  bytesPerParam: 0.25 },
+      ];
+      // 模型本身 + KV cache + 運算暫存 的 overhead 倍率
+      const overheadRatio = paramsB >= 30 ? 1.25 : paramsB >= 7 ? 1.3 : 1.4;
+      
+      let quantHtml = `<div class="quant-section" style="margin-top:16px;padding:14px;background:var(--bg);border-radius:10px;">
+        <div style="font-weight:600;margin-bottom:10px;">📉 量化版本分析（約 ${paramsB}B 參數）</div>
+        <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+          <thead><tr style="color:var(--text2);border-bottom:1px solid var(--border);">
+            <th style="padding:6px 8px;text-align:left;">量化</th>
+            <th style="padding:6px 8px;text-align:right;">位元</th>
+            <th style="padding:6px 8px;text-align:right;">估 VRAM</th>
+            <th style="padding:6px 8px;text-align:center;">你 ${pc.vramGB}GB</th>
+          </tr></thead><tbody>`;
+      
+      for (const q of quants) {
+        const vramEst = Math.ceil(paramsB * q.bytesPerParam * overheadRatio);
+        const hasOverhead = (q.bits <= 4 && paramsB >= 7);
+        let status = "✅ 順跑";
+        if (vramEst <= pc.vramGB) {
+          status = pc.vramGB >= vramEst * 1.15 ? "✅ 順跑" : "⚠️ 可跑";
+        } else {
+          status = vramEst <= pc.vramGB * 1.25 && q.bits <= 6 ? "⚠️ 勉強" : "❌ 不足";
+        }
+        const note = (q.bits === 4 && paramsB <= 7) ? " 推薦!" : q.bits === 2 ? " 品質較差" : "";
+        const color = status.includes("✅") ? "var(--green)" : status.includes("⚠") ? "var(--yellow)" : "var(--red)";
+        
+        quantHtml += `<tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:5px 8px;">${q.name}${note}</td>
+          <td style="padding:5px 8px;text-align:right;color:var(--text2);">${q.bits}-bit</td>
+          <td style="padding:5px 8px;text-align:right;font-weight:600;">~${vramEst} GB</td>
+          <td style="padding:5px 8px;text-align:center;color:${color};font-weight:500;">${status}</td>
+        </tr>`;
+      }
+      
+      quantHtml += `</tbody></table>
+        <div style="margin-top:8px;font-size:0.75rem;color:var(--text2);line-height:1.4;">
+          ⚡ 約估值，含模型權重 + KV cache + 運算暫存。實際用量依實作而異。
+          ${model.cat === 'llm' ? 'LLM 建議使用 GGUF/Q4_K_M 格式以獲得最佳性價比。' : ''}
+          ${model.cat === 'video' || model.cat === 'image' ? '擴散模型量化支援較有限，請確認框架相容性。' : ''}
+        </div>
+      </div>`;
+      
+      // 插入量化表格到 verdict 之後
+      const lastVerdictIdx = html.lastIndexOf('</div>');
+      if (lastVerdictIdx > 0) {
+        html = html.slice(0, lastVerdictIdx) + quantHtml + html.slice(lastVerdictIdx);
+      }
+    }
+  })();
+
+  html += `<div style="font-size:0.85rem;color:var(--text2);margin:8px 0;line-height:1.5;">💡 ${model.note}</div>`;
+
+  const suggestions = [];
+  if (pc.vramGB > 0 && pc.vramGB < model.vram_min) {
+    suggestions.push(`<strong>顯存不足</strong>：當前 ${pc.vramGB}GB，最低需求 ${model.vram_min}GB。建議升級到 ${model.vram_rec}GB+ 的顯卡。`);
+    if (model.vram_rec >= 24) suggestions.push(`推薦：RTX 4090 24GB、RTX 5090 32GB 或 RX 7900 XTX 24GB。`);
+    else if (model.vram_rec >= 16) suggestions.push(`推薦：RTX 4070 Ti Super 16GB、RTX 4080 Super 16GB 或 RX 7800 XT 16GB。`);
+    else suggestions.push(`推薦：RTX 4060 Ti 16GB 或 RTX 4070 12GB。`);
+  }
+  if (pc.ramGB > 0 && pc.ramGB < model.ram_min) {
+    suggestions.push(`<strong>記憶體不足</strong>：當前 ${pc.ramGB}GB，建議升級到 ${model.ram_rec}GB+。`);
+  }
+  if (pc.vramGB > 0 && pc.vramGB >= model.vram_min && pc.vramGB < model.vram_rec) {
+    suggestions.push(`<strong>顯存剛好達標</strong>：當前 ${pc.vramGB}GB，已達最低要求。建議使用 Int4/FP8 量化版或升級到 ${model.vram_rec}GB+。`);
+  }
+  if (model.cat === "llm" && pc.vramGB > 0 && pc.vramGB < model.vram_min + 4) {
+    suggestions.push(`💡 嘗試使用 <strong>Int4/GGUF 量化版</strong>，可降低約 60% 顯存占用。`);
+  }
+  if (model.cat === "video" && pc.vramGB > 0 && pc.vramGB < model.vram_min + 4) {
+    suggestions.push(`🎬 影片生成很吃顯存。可嘗試 <strong>降低輸出解析度</strong>（如 512→256）或減少幀數。`);
+  }
+  if (pc.ramGB > 0 && pc.ramGB < 16) {
+    suggestions.push(`💵 <strong>記憶體偏小</strong>：建議至少 16GB，推薦 32GB+。升級記憶體是性價比最高的提升之一。`);
+  }
+  if (pc.diskGB > 0 && pc.diskGB < model.disk + 10) {
+    suggestions.push(`💿 <strong>磁碟空間可能不足</strong>：模型檔案約 ${model.disk}GB，請確保有足夠空間。`);
+  }
+  if (!suggestions.length) {
+    suggestions.push(`🎉 你的配置已經足夠，無需額外升級。可使用量化版進一步提升速度。`);
+  }
+
+  if (suggestions.length) {
+    html += `<div class="suggestions"><strong>💡 建議：</strong><ul>`;
+    suggestions.forEach(s => html += `<li>${s}</li>`);
+    html += `</ul></div>`;
+  }
+
+  // 🛒 蝦皮商品連結（AI夢幻工廠）
+  const shopeeNote = model.note || "";
+  if (shopeeNote.includes("蝦皮") || shopeeNote.includes("AI夢幻工廠")) {
+    const searchUrl = "https://shopee.tw/search?shop=25204842&keyword=" + encodeURIComponent(key);
+    html += `<div style="margin-top:14px;text-align:center;">
+      <a href="${searchUrl}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;padding:8px 20px;border-radius:20px;background:var(--surface2);border:1px solid var(--border);color:var(--accent2);text-decoration:none;font-size:0.9rem;transition:all 0.2s;">
+        🛒 <strong>✨ AI夢幻工廠</strong> 查看此商品 <span style="font-size:0.72rem;">↗</span>
+      </a>
+    </div>`;
+  }
+
+  document.getElementById("resultSection").classList.add("visible");
+  document.getElementById("resultContent").innerHTML = html;
+  document.getElementById("resultSection").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// ========================================================================
+// 啟動自動檢測
+// ========================================================================
+window.addEventListener("DOMContentLoaded", () => {
+  // 先載入系統設定，沒有才用瀏覽器偵測（避免正確資料被覆蓋）
+  autoLoadSystemConfig().then(loaded => {
+    if (!loaded) {
+      detectHardware();
+    }
+  });
+  // 返回頂部按鈕顯示邏輯
+  window.addEventListener("scroll", () => {
+    document.getElementById("backToTop").classList.toggle("visible", window.scrollY > 400);
+  });
+});
+</script>
+
+</body>
+</html>

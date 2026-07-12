@@ -1,0 +1,16 @@
+*.png
+*.bak
+__pycache__/
+*.pyc
+
+# LibreHardwareMonitor (auto-downloaded by run-detection.bat)
+librehardware/
+
+# Debug output
+_debug.json
+
+# Auto-generated JS wrapper (generated from models.json by run-detection.bat)
+models.js
+
+# Temp debug files
+temp_*.txt
