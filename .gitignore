@@ -17,3 +17,21 @@ temp_*.txt
 
 # Debug/test HTML files
 webgl-test.html
+
+# AIHardwareChecker build/dist artifacts
+build/
+dist/
+*.exe
+*.spec
+pack.ps1
+AIHC_debug.log
+app.py
+main.py
+hardware_monitor.py
+wrangler.toml
+.wranglerignore
+__remo__/
+assets/
+functions/
+README.md
+CHANGELOG.md
