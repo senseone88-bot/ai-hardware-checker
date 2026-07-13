@@ -1915,7 +1915,7 @@ function toggleChips() {
 function updateChipToggleText() {
   const btn = document.getElementById("chipToggleBtn");
   if (!btn) return;
-  btn.textContent = chipsExpanded ? "📌 收合全部" : `📌 展開全部 (${MODEL_CHIPS.length}個)`;
+  btn.textContent = chipsExpanded ? "📌 收合全部" : `📌 展開全部 (${Object.keys(MODELS).length}個)`;
 }
 
 function filterModels() {
